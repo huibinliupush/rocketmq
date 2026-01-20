@@ -170,6 +170,7 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
     protected <V, T> void addExecutor(ExecutorService executor, ProxyContext context, V request, Runnable runnable,
         StreamObserver<T> responseObserver, Function<Status, T> statusResponseCreator) {
         if (request instanceof GeneratedMessageV3) {
+            // org.apache.rocketmq.proxy.grpc.v2.GrpcMessagingApplication.create
             requestPipeline.execute(context, GrpcConstants.METADATA.get(Context.current()), (GeneratedMessageV3) request);
             validateContext(context);
         } else {

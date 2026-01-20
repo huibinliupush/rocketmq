@@ -377,7 +377,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         GetMessageResult getMessageResult = new GetMessageResult(requestHeader.getMaxMsgNums());
         ExpressionMessageFilter finalMessageFilter = messageFilter;
         SubscriptionData finalSubscriptionData = subscriptionData;
-
+        // https://github.com/apache/rocketmq/wiki/%5BRIP%E2%80%9073%5D-Pop-Consumption-Improvement-Based-on-RocksDB
         if (brokerConfig.isPopConsumerKVServiceEnable()) {
 
             CompletableFuture<PopConsumerContext> popAsyncFuture = brokerController.getPopConsumerService().popAsync(
@@ -479,7 +479,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             }).thenAccept(result -> NettyRemotingAbstract.writeResponse(channel, request, result));
             return null;
         }
-
+        // https://github.com/apache/rocketmq/wiki/%5BRIP-19%5D-Server-side-rebalance,--lightweight-consumer-client-support
         int randomQ = random.nextInt(100);
         int reviveQid;
         if (requestHeader.isOrder()) {
@@ -517,11 +517,14 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                     popTime, finalMessageFilter, startOffsetInfo, msgOffsetInfo, orderCountInfo, randomQ, getMessageFuture);
             }
         }
+        // proxy 端设置的 queueId = -1
+        // see : org.apache.rocketmq.proxy.processor.ConsumerProcessor.popMessage(org.apache.rocketmq.proxy.common.ProxyContext, org.apache.rocketmq.proxy.service.route.AddressableMessageQueue, java.lang.String, java.lang.String, int, long, long, int, org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData, boolean, org.apache.rocketmq.proxy.processor.PopMessageResultFilter, java.lang.String, long)
         if (requestHeader.getQueueId() < 0) {
             // read all queue
             getMessageFuture = popMsgFromTopic(topicConfig, false, getMessageResult, requestHeader, reviveQid, channel,
                 popTime, finalMessageFilter, startOffsetInfo, msgOffsetInfo, orderCountInfo, randomQ, getMessageFuture);
         } else {
+            // 明确指定 queueId
             int queueId = requestHeader.getQueueId();
             getMessageFuture = getMessageFuture.thenCompose(restNum ->
                 popMsgFromQueue(topicConfig.getTopicName(), requestHeader.getAttemptId(), false,
@@ -591,6 +594,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             switch (finalResponse.getCode()) {
                 case ResponseCode.SUCCESS:
                     if (this.brokerController.getBrokerConfig().isTransferMsgByHeap()) {
+                        // 将拉取到的所有消息 ByteBuffer 填充到一个字节数组中
                         final byte[] r = this.readGetMessageResult(getMessageResult, requestHeader.getConsumerGroup(),
                             requestHeader.getTopic(), requestHeader.getQueueId());
                         this.brokerController.getBrokerStatsManager().incGroupGetLatency(requestHeader.getConsumerGroup(),
@@ -638,6 +642,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         ExpressionMessageFilter messageFilter, StringBuilder startOffsetInfo,
         StringBuilder msgOffsetInfo, StringBuilder orderCountInfo, int randomQ, CompletableFuture<Long> getMessageFuture) {
         if (topicConfig != null) {
+            // topic 中的每个队列都会拉取
             for (int i = 0; i < topicConfig.getReadQueueNums(); i++) {
                 int queueId = (randomQ + i) % topicConfig.getReadQueueNums();
                 getMessageFuture = getMessageFuture.thenCompose(restNum ->
@@ -678,6 +683,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         }
 
         CompletableFuture<Long> future = new CompletableFuture<>();
+        // 每个 lockkey: topic@consumerGroup@queueId 对应一把锁
+        // 在 pop message 的时候要对 queue 进行加锁
         if (!queueLockManager.tryLock(lockKey)) {
             try {
                 if (!requestHeader.isOrder()) {
@@ -691,6 +698,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         }
 
         future.whenComplete((result, throwable) -> queueLockManager.unLock(lockKey));
+        // inflight message 超过 10000 条
         if (isPopShouldStop(topic, requestHeader.getConsumerGroup(), queueId)) {
             POP_LOGGER.warn("Too much msgs unacked, then stop popping. topic={}, group={}, queueId={}",
                 topic, requestHeader.getConsumerGroup(), queueId);
@@ -990,6 +998,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             for (ByteBuffer bb : messageBufferList) {
 
                 byteBuffer.put(bb);
+                // 最近拉取消息的 storeTime
                 storeTimestamp = bb.getLong(MessageDecoder.MESSAGE_STORE_TIMESTAMP_POSITION);
             }
         } finally {

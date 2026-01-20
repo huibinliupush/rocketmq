@@ -129,7 +129,7 @@ public interface ConsumeQueueStoreInterface {
     long rollNextFile(ConsumeQueueInterface consumeQueue, final long offset);
 
     /**
-     * truncate dirty data
+     * truncate dirty data 从 consumer queue 中删除无效的消息索引
      * @param offsetToTruncate
      * @throws RocksDBException only in rocksdb mode
      */

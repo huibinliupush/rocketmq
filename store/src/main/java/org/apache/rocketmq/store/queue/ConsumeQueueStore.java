@@ -66,7 +66,9 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
 
     @Override
     public boolean load() {
+        // storePath/consumequeue
         boolean cqLoadResult = loadConsumeQueues(getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()), CQType.SimpleCQ);
+        // storePath/batchconsumequeue
         boolean bcqLoadResult = loadConsumeQueues(getStorePathBatchConsumeQueue(this.messageStoreConfig.getStorePathRootDir()), CQType.BatchCQ);
         return cqLoadResult && bcqLoadResult;
     }
@@ -149,7 +151,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
         FileQueueLifeCycle fileQueueLifeCycle = getLifeCycle(consumeQueue.getTopic(), consumeQueue.getQueueId());
         return fileQueueLifeCycle.rollNextFile(offset);
     }
-
+    // 通过当前 commitlog 中最小的 minPhyOffset ，修正所有 consumerqueue 中的 minOffset（org.apache.rocketmq.store.ConsumeQueue.minLogicOffset）
     public void correctMinOffset(ConsumeQueueInterface consumeQueue, long minCommitLogOffset) {
         consumeQueue.correctMinOffset(minCommitLogOffset);
     }
@@ -203,10 +205,12 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
 
     private boolean loadConsumeQueues(String storePath, CQType cqType) {
         File dirLogic = new File(storePath);
+        // consumerqueues 目录下所有的文件
         File[] fileTopicList = dirLogic.listFiles();
         if (fileTopicList != null) {
 
             for (File fileTopic : fileTopicList) {
+                // storePath/consumerqueues/topic/queueid
                 String topic = fileTopic.getName();
 
                 File[] fileQueueIdList = fileTopic.listFiles();
@@ -355,7 +359,10 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
     }
 
     public void truncateDirtyLogicFiles(ConsumeQueueInterface consumeQueue, long phyOffset) {
+        // 从 consumeQueueTable 中获取对应的 consumeQueue （不存在的话，则进行初始化）
         FileQueueLifeCycle fileQueueLifeCycle = getLifeCycle(consumeQueue.getTopic(), consumeQueue.getQueueId());
+        // 从 consumer queue 中删除无效的消息索引（在 commit log 的 offset >= phyOffset）
+        // 所谓删除就是重新调整 mappedFile 的相关 position 信息（类似 byte buffer 的相关指针操作）
         fileQueueLifeCycle.truncateDirtyLogicFiles(phyOffset);
     }
 
@@ -452,6 +459,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
 
     @Override
     public void recoverOffsetTable(long minPhyOffset) {
+        // key : Topic-QueueId  value: 该 consumer queue 最大的 offset
         ConcurrentMap<String, Long> cqOffsetTable = new ConcurrentHashMap<>(1024);
         ConcurrentMap<String, Long> bcqOffsetTable = new ConcurrentHashMap<>(1024);
 
@@ -465,7 +473,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
                 } else {
                     cqOffsetTable.put(key, maxOffsetInQueue);
                 }
-
+                // 通过当前 commitlog 中最小的 minPhyOffset ，修正所有 consumerqueue 中的 minOffset（org.apache.rocketmq.store.ConsumeQueue.minLogicOffset）
                 this.correctMinOffset(logic, minPhyOffset);
             }
         }
@@ -570,11 +578,12 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
             }
         }
     }
-
+    // 从 consumer queue 中删除无效的消息索引
     @Override
     public void truncateDirty(long offsetToTruncate) {
         for (ConcurrentMap<Integer, ConsumeQueueInterface> maps : this.consumeQueueTable.values()) {
             for (ConsumeQueueInterface logic : maps.values()) {
+                // 一个队列一个队列的截断
                 this.truncateDirtyLogicFiles(logic, offsetToTruncate);
             }
         }

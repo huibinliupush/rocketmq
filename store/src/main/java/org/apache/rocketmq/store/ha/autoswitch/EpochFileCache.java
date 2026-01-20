@@ -41,7 +41,12 @@ public class EpochFileCache {
     private final ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
     private final Lock readLock = this.readWriteLock.readLock();
     private final Lock writeLock = this.readWriteLock.writeLock();
+    // epoch -> epochEntry
+    // endOffset 的修改是发生在每一次主从切换的时候
+    // org.apache.rocketmq.store.ha.autoswitch.EpochFileCache.appendEntry
+    // 新的 epoch endOffset 为无限大
     private final TreeMap<Integer, EpochEntry> epochMap;
+    // 对于 epoch file 的封装（提供读写操作）
     private CheckpointFile<EpochEntry> checkpoint;
 
     public EpochFileCache() {
@@ -50,13 +55,19 @@ public class EpochFileCache {
 
     public EpochFileCache(final String path) {
         this.epochMap = new TreeMap<>();
+        // user.home/store/epochFileCheckpoint(默认)
         this.checkpoint = new CheckpointFile<>(path, new EpochEntrySerializer());
     }
 
     public boolean initCacheFromFile() {
         this.writeLock.lock();
         try {
+            // 从 epochFileCheckpoint 文件加载 epoch
+            // epoch-startOffset (EpochEntry)
             final List<EpochEntry> entries = this.checkpoint.read();
+            // 初始化 EpochEntry ，并缓存到 epochMap
+            // EpochEntry 的 endOffset 是其后一个 EpochEntry 的 StartOffset
+            // endOffset 初始为 Long.MAX_VALUE
             initEntries(entries);
             return true;
         } catch (final IOException e) {
@@ -80,6 +91,8 @@ public class EpochFileCache {
     private void initEntries(final List<EpochEntry> entries) {
         this.epochMap.clear();
         EpochEntry preEntry = null;
+        // EpochEntry 的 endOffset 是其后一个 EpochEntry 的 StartOffset
+        // endOffset 初始为 Long.MAX_VALUE
         for (final EpochEntry entry : entries) {
             this.epochMap.put(entry.getEpoch(), entry);
             if (preEntry != null) {
@@ -230,10 +243,14 @@ public class EpochFileCache {
             long consistentOffset = -1;
             final Map<Integer, EpochEntry> descendingMap = new TreeMap<>(this.epochMap).descendingMap();
             final Iterator<Map.Entry<Integer, EpochEntry>> iter = descendingMap.entrySet().iterator();
+            // 以本地的 epoch 为准，从后向前依次比较
             while (iter.hasNext()) {
+                // 本地当前的 epoch
                 final Map.Entry<Integer, EpochEntry> curLocalEntry = iter.next();
+                // master 对应的 epoch
                 final EpochEntry compareEntry = compareCache.getEntry(curLocalEntry.getKey());
                 if (compareEntry != null && compareEntry.getStartOffset() == curLocalEntry.getValue().getStartOffset()) {
+                    // 如果两者的 startOffet (有效的 epoch) 相同，则 consistentOffset 取两者较小的 endOffset
                     consistentOffset = Math.min(curLocalEntry.getValue().getEndOffset(), compareEntry.getEndOffset());
                     break;
                 }
@@ -254,6 +271,8 @@ public class EpochFileCache {
 
     /**
      * Remove epochEntries with startOffset >= truncateOffset.
+     * truncateOffset 之后的 commitlog ， consume queue 已经被截断
+     * 这里要修正 epoch ,将 truncateOffset 之后的 epoch 删除
      */
     public void truncateSuffixByOffset(final long truncateOffset) {
         Predicate<EpochEntry> predict = entry -> entry.getStartOffset() >= truncateOffset;
@@ -268,6 +287,7 @@ public class EpochFileCache {
             if (entry != null) {
                 entry.setEndOffset(Long.MAX_VALUE);
             }
+            // 将 epochmap 写入到 user.home/store/epochFileCheckpoint(默认) 文件中
             flush();
         } finally {
             this.writeLock.unlock();

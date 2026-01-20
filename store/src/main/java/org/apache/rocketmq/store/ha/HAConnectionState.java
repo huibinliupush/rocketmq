@@ -27,7 +27,8 @@ public enum HAConnectionState {
      */
     HANDSHAKE,
     /**
-     * Synchronizing data.
+     * Synchronizing data. slave 截断日志之后，状态变为 TRANSFER
+     * org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAClient#doTruncate(java.util.List, long)
      */
     TRANSFER,
     /**

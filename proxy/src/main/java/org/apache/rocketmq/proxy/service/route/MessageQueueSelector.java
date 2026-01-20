@@ -47,6 +47,7 @@ public class MessageQueueSelector {
     private final Map<String, AddressableMessageQueue> brokerNameQueueMap = new ConcurrentHashMap<>();
     private final AtomicInteger queueIndex;
     private final AtomicInteger brokerIndex;
+    // org.apache.rocketmq.proxy.service.route.TopicRouteService.mqFaultStrategy
     private MQFaultStrategy mqFaultStrategy;
 
     public MessageQueueSelector(TopicRouteWrapper topicRouteWrapper, MQFaultStrategy mqFaultStrategy, boolean read) {

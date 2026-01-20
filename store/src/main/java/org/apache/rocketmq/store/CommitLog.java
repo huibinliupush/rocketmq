@@ -93,11 +93,14 @@ public class CommitLog implements Swappable {
 
     private final AppendMessageCallback appendMessageCallback;
     private final ThreadLocal<PutMessageThreadLocal> putMessageThreadLocal;
-
+    // from StoreCheckpoint
+    // see : org.apache.rocketmq.store.StoreCheckpoint.StoreCheckpoint
+    // 主节点的 confirmOffset 是所有 SyncStateSet 副本中最小的 MaxOffset 点。从节点的 confirmOffset 由两个值决定：
+    // 一个是主节点发送消息时，Header 中包含的当前 confirmOffset；另一个是当前的最大 confirmOffset。取这两个值中的最小值
     protected volatile long confirmOffset = -1L;
 
     private volatile long beginTimeInLock = 0;
-
+    // PutMessageReentrantLock
     protected final PutMessageLock putMessageLock;
 
     protected final TopicQueueLock topicQueueLock;
@@ -107,10 +110,11 @@ public class CommitLog implements Swappable {
     private final FlushDiskWatcher flushDiskWatcher;
 
     protected int commitLogSize;
-
+    // false
     private final boolean enabledAppendPropCRC;
 
     public CommitLog(final DefaultMessageStore messageStore) {
+        // user.home/stpre/commitlog
         String storePath = messageStore.getMessageStoreConfig().getStorePathCommitLog();
         if (storePath.contains(MixAll.MULTI_PATH_SPLITTER)) {
             this.mappedFileQueue = new MultiPathMappedFileQueue(messageStore.getMessageStoreConfig(),
@@ -136,7 +140,7 @@ public class CommitLog implements Swappable {
         };
 
         PutMessageLock adaptiveBackOffSpinLock = new AdaptiveBackOffSpinLockImpl();
-
+        // PutMessageReentrantLock
         this.putMessageLock = messageStore.getMessageStoreConfig().getUseABSLock() ? adaptiveBackOffSpinLock :
             messageStore.getMessageStoreConfig().isUseReentrantLockWhenPutMessage() ? new PutMessageReentrantLock() : new PutMessageSpinLock();
 
@@ -145,7 +149,7 @@ public class CommitLog implements Swappable {
         this.topicQueueLock = new TopicQueueLock(messageStore.getMessageStoreConfig().getTopicQueueLockNum());
 
         this.commitLogSize = messageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
-
+        // false
         this.enabledAppendPropCRC = messageStore.getMessageStoreConfig().isEnabledAppendPropCRC();
     }
 
@@ -166,8 +170,10 @@ public class CommitLog implements Swappable {
     }
 
     public boolean load() {
+        // 加载 store path/commitlog 下的所有文件
         boolean result = this.mappedFileQueue.load();
         if (result && !defaultMessageStore.getMessageStoreConfig().isDataReadAheadEnable()) {
+            // 取消预读， 默认开启预读
             scanFileAndSetReadMode(LibC.MADV_RANDOM);
         }
         this.mappedFileQueue.checkSelf();
@@ -246,6 +252,8 @@ public class CommitLog implements Swappable {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, returnFirstOnNotFound);
         if (mappedFile != null) {
+            // offset 是全局的绝对位置
+            // pos 是 mappedFile 内是文件内的局部相对位置
             int pos = (int) (offset % mappedFileSize);
             SelectMappedBufferResult result = mappedFile.selectMappedBuffer(pos);
             return result;
@@ -652,6 +660,7 @@ public class CommitLog implements Swappable {
 
     // Fetch and compute the newest confirmOffset.
     // Even if it is just inited.
+    // ConfirmOffset 表示存储在 commitlog 中的 offset , bytes that have been stored in commit log
     public long getConfirmOffset() {
         if (this.defaultMessageStore.getBrokerConfig().isEnableControllerMode()) {
             if (this.defaultMessageStore.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE && !this.defaultMessageStore.getRunningFlags().isFenced()) {
@@ -827,16 +836,20 @@ public class CommitLog implements Swappable {
     }
 
     public void truncateDirtyFiles(long phyOffset) {
+        // 如果 phyOffset 到 FlushedWhere 之间的 commitlog 已经 flush 到磁盘了
+        // 那么就将下次 flush 的起点重新设置为 phyOffset ，后续会将原来 phyOffset 到 FlushedWhere 之间的无效 commitlog 覆盖
         if (phyOffset <= this.getFlushedWhere()) {
             this.mappedFileQueue.setFlushedWhere(phyOffset);
         }
-
+        // 同样的道理如果 phyOffset 到 FlushedWhere 之间的 commitlog 已经到 page cache 了
+        // 下次重新覆盖点这段内容就行
         if (phyOffset <= this.mappedFileQueue.getCommittedWhere()) {
             this.mappedFileQueue.setCommittedWhere(phyOffset);
         }
-
+        // 将 phyOffset 之外的 commitlog 删除
         this.mappedFileQueue.truncateDirtyFiles(phyOffset);
         if (this.confirmOffset > phyOffset) {
+            // ConfirmOffset 表示已经存储在 commitlog 中的有效位点
             this.setConfirmOffset(phyOffset);
         }
     }
@@ -1021,6 +1034,7 @@ public class CommitLog implements Swappable {
 
                 if (null == mappedFile || mappedFile.isFull()) {
                     mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
+                    // 关闭文件预读（默认开启）
                     if (isCloseReadAhead()) {
                         setFileReadMode(mappedFile, LibC.MADV_RANDOM);
                     }
@@ -2213,6 +2227,7 @@ public class CommitLog implements Swappable {
                     GroupCommitRequest request = new GroupCommitRequest(result.getWroteOffset() + result.getWroteBytes(), CommitLog.this.defaultMessageStore.getMessageStoreConfig().getSyncFlushTimeout());
                     flushDiskWatcher.add(request);
                     service.putRequest(request);
+                    // flush 操作虽然是异步执行，但是会把 flush 结果同步给 Future
                     return request.future();
                 } else {
                     service.wakeup();
@@ -2230,6 +2245,7 @@ public class CommitLog implements Swappable {
                         commitRealTimeService.wakeup();
                     }
                 }
+                // wake up flush 线程，然后直接不管了，返回 completedFuture
                 return CompletableFuture.completedFuture(PutMessageStatus.PUT_OK);
             }
         }

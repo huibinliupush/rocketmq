@@ -144,6 +144,8 @@ public class BrokerStatsManager {
     private final String clusterName;
     private final boolean enableQueueStat;
     private MomentStatsItemSet momentStatsItemSetFallSize;
+    // fallBehind : 当前时间与最近拉取消息的 storetime 之间的差值
+    // see : org.apache.rocketmq.broker.processor.PopMessageProcessor.readGetMessageResult
     private MomentStatsItemSet momentStatsItemSetFallTime;
 
     private final StatisticsManager accountStatManager = new StatisticsManager();

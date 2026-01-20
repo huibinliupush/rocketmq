@@ -56,6 +56,7 @@ public class IndexService {
     }
 
     public boolean load(final boolean lastExitOK) {
+        // storePath/index 下的文件
         File dir = new File(this.storePath);
         File[] files = dir.listFiles();
         if (files != null) {

@@ -45,7 +45,7 @@ public class ConsumerFilterManager extends ConfigManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.FILTER_LOGGER_NAME);
 
     private static final long MS_24_HOUR = 24 * 3600 * 1000;
-
+    // 加载自 user.home/store/config/consumerFilter.json
     private ConcurrentMap<String/*Topic*/, FilterDataMapByTopic>
         filterDataByTopic = new ConcurrentHashMap<>(256);
 

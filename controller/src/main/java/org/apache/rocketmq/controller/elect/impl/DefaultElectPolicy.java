@@ -75,13 +75,17 @@ public class DefaultElectPolicy implements ElectPolicy {
         Long newMaster = null;
         // try to elect in syncStateBrokers
         if (syncStateBrokers != null) {
+            // 首先比较 broker 的 epoch , 选取最大的 epoch 为 master
+            // 如果 epoch 相同，则继续看 MaxOffset ，选取最大的 maxOffset 为 master
+            // 如果 epoch , maxOffset 都相同，则以 ElectionPriority 为准，值越小，越有机会成为 master
+            // 如果全部相同，则选第一个
             newMaster = tryElect(clusterName, brokerName, syncStateBrokers, oldMaster, preferBrokerId);
         }
         if (newMaster != null) {
             return newMaster;
         }
 
-        // try to elect in all allReplicaBrokers
+        // 如果 EnableElectUncleanMaster ， try to elect in all allReplicaBrokers
         if (allReplicaBrokers != null) {
             newMaster = tryElect(clusterName, brokerName, allReplicaBrokers, oldMaster, preferBrokerId);
         }
@@ -91,10 +95,13 @@ public class DefaultElectPolicy implements ElectPolicy {
     private Long tryElect(String clusterName, String brokerName, Set<Long> brokers, Long oldMaster,
         Long preferBrokerId) {
         if (this.validPredicate != null) {
+            // 首先在备选集合中，过滤出所有 active 的 broker
             brokers = brokers.stream().filter(brokerAddr -> this.validPredicate.check(clusterName, brokerName, brokerAddr)).collect(Collectors.toSet());
         }
         if (!brokers.isEmpty()) {
             // if old master is still valid, and preferBrokerAddr is blank or is equals to oldMaster
+            // 如果 old master 依旧存活，那么还是原来的 master
+            // 但如果我们指定了 preferBrokerId ， 那么就以指定的为准
             if (brokers.contains(oldMaster) && (preferBrokerId == null || preferBrokerId.equals(oldMaster))) {
                 return oldMaster;
             }
@@ -106,7 +113,12 @@ public class DefaultElectPolicy implements ElectPolicy {
 
             if (this.brokerLiveInfoGetter != null) {
                 // sort brokerLiveInfos by (epoch,maxOffset)
+                // 首先比较 broker 的 epoch , 选取最大的 epoch 为 master
+                // 如果 epoch 相同，则继续看 MaxOffset ，选取最大的 maxOffset 为 master
+                // 如果 epoch , maxOffset 都相同，则以 ElectionPriority 为准，值越小，越有机会成为 master
+                // 如果全部相同，则选第一个
                 TreeSet<BrokerLiveInfo> brokerLiveInfos = new TreeSet<>(this.comparator);
+                // 挨个获取备选集合中 acitve broker 的 BrokerLiveInfo，并加入到 brokerLiveInfos 中
                 brokers.forEach(brokerAddr -> brokerLiveInfos.add(this.brokerLiveInfoGetter.get(clusterName, brokerName, brokerAddr)));
                 if (brokerLiveInfos.size() >= 1) {
                     return brokerLiveInfos.first().getBrokerId();

@@ -50,7 +50,7 @@ public class TopicQueueMappingManager extends ConfigManager {
     //this data version should be equal to the TopicConfigManager
     private final DataVersion dataVersion = new DataVersion();
     private transient BrokerController brokerController;
-
+    // 加载自 user.home/store/config/topicQueueMapping.json
     private final ConcurrentMap<String, TopicQueueMappingDetail> topicQueueMappingTable = new ConcurrentHashMap<>();
 
 

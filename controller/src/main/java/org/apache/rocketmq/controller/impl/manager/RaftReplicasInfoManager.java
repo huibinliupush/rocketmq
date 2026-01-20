@@ -86,9 +86,11 @@ public class RaftReplicasInfoManager extends ReplicasInfoManager {
             log.info("new broker registered, brokerIdentityInfo: {}", identityInfo);
             return brokerLiveInfo;
         });
+        // 更新心跳时间
         prev.setLastUpdateTimestamp(brokerLiveInfo.getLastUpdateTimestamp());
         prev.setHeartbeatTimeoutMillis(brokerLiveInfo.getHeartbeatTimeoutMillis());
         prev.setElectionPriority(brokerLiveInfo.getElectionPriority());
+        // epoch , masOffset, confirmOffset 更新
         if (brokerLiveInfo.getEpoch() > prev.getEpoch() || brokerLiveInfo.getEpoch() == prev.getEpoch() && brokerLiveInfo.getMaxOffset() > prev.getMaxOffset()) {
             prev.setEpoch(brokerLiveInfo.getEpoch());
             prev.setMaxOffset(brokerLiveInfo.getMaxOffset());
@@ -110,25 +112,37 @@ public class RaftReplicasInfoManager extends ReplicasInfoManager {
     }
 
     public ControllerResult<CheckNotActiveBrokerResponse> checkNotActiveBroker(CheckNotActiveBrokerRequest request) {
+        // 存放本次扫描到的所有 no active broker
         List<BrokerIdentityInfo> notActiveBrokerIdentityInfoList = new ArrayList<>();
         long checkTime = request.getCheckTimeMillis();
+        // 遍历当前所有的 broker , broker 每次心跳发送都会更新 brokerLiveTable
         final Iterator<Map.Entry<BrokerIdentityInfo, BrokerLiveInfo>> iterator = this.brokerLiveTable.entrySet().iterator();
+        // 这一步主要为了后续从 brokerChannelIdentityInfoMap 中挨个删除 notActiveBrokerIdentityInfoList 中的 broker，关闭 channel
         while (iterator.hasNext()) {
+            // 挨个获取 broker 的 live 信息
             final Map.Entry<BrokerIdentityInfo, BrokerLiveInfo> next = iterator.next();
+            // broker 上一次心跳时间
             long last = next.getValue().getLastUpdateTimestamp();
+            // 心跳超时时间 10s
             long timeoutMillis = next.getValue().getHeartbeatTimeoutMillis();
             if (checkTime - last > timeoutMillis) {
+                // 心跳超时， broker no avtive
                 notActiveBrokerIdentityInfoList.add(next.getKey());
+                // 从 brokerLiveTable 中删除，如果后续 broker 发送心跳，又会重新添加进 brokerLiveTable
                 iterator.remove();
                 log.warn("Broker expired, brokerInfo {}, expired {}ms", next.getKey(), timeoutMillis);
             }
         }
+        // 检查所有副本组， master no active 但是有至少一个 slave active
+        // 获取需要重新选主的副本组
+        // 这一步主要为了后续选主，以上两步后面会合并在一起处理
         List<String> needReElectBrokerNames = scanNeedReelectBrokerSets(new BrokerValidPredicate() {
             @Override
             public boolean check(String clusterName, String brokerName, Long brokerId) {
                 return !isBrokerActive(clusterName, brokerName, brokerId, checkTime);
             }
         });
+        // 刚才扫描到的 no active broker 所在的副本组
         Set<String> alreadyReportedBrokerName = notActiveBrokerIdentityInfoList.stream()
             .map(BrokerIdentityInfo::getBrokerName)
             .collect(Collectors.toSet());
@@ -153,8 +167,10 @@ public class RaftReplicasInfoManager extends ReplicasInfoManager {
         if (info != null) {
             long last = info.getLastUpdateTimestamp();
             long timeoutMillis = info.getHeartbeatTimeoutMillis();
+            // 心跳未超时
             return (last + timeoutMillis) >= invokeTime;
         }
+        // 没有 broker 的 live 信息
         return false;
     }
 

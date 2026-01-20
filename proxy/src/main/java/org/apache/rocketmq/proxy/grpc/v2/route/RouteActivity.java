@@ -116,11 +116,14 @@ public class RouteActivity extends AbstractMessingActivity {
             }
 
             List<Assignment> assignments = new ArrayList<>();
+            // BrokerName（副本组名称） -> BrokerId（该副本组中的节点数）
             Map<String, Map<Long, Broker>> brokerMap = buildBrokerMap(proxyTopicRouteData.getBrokerDatas());
             for (QueueData queueData : proxyTopicRouteData.getQueueDatas()) {
                 if (PermName.isReadable(queueData.getPerm()) && queueData.getReadQueueNums() > 0) {
+                    // 队列所在的副本组
                     Map<Long, Broker> brokerIdMap = brokerMap.get(queueData.getBrokerName());
                     if (brokerIdMap != null) {
+                        // 该副本组的 master 节点
                         Broker broker = brokerIdMap.get(MixAll.MASTER_ID);
                         Permission permission = this.convertToPermission(queueData.getPerm());
                         if (fifo) {
@@ -140,7 +143,7 @@ public class RouteActivity extends AbstractMessingActivity {
                                 .setTopic(request.getTopic())
                                 .setId(-1)
                                 .setPermission(permission)
-                                .setBroker(broker)
+                                .setBroker(broker) // 队列所在副本组的 master 节点
                                 .build();
                             assignments.add(Assignment.newBuilder()
                                 .setMessageQueue(defaultMessageQueue)

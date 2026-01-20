@@ -59,7 +59,13 @@ import org.rocksdb.RocksDBException;
 public class AutoSwitchHAService extends DefaultHAService {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private final ExecutorService executorService = ThreadUtils.newSingleThreadExecutor(new ThreadFactoryImpl("AutoSwitchHAService_Executor_"));
+    // 保存 slave 的 lastCaughtUpTimestamp
+    // 当 slave 完全追上了 master 的进度，则更新 lastCaughtUpTimestamp
+    // org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAConnection.AbstractWriteSocketService.transferToSlave
+    // caughtUpTimeMs 表示的是 slave 追上 master 进度那一刻的时间戳
+    // 追上当前进度，caughtUpTimeMs 就是当前时间戳，追上上一次 transfer 时候的 master 进度，时间戳就是 lastTransferTimeMs
     private final ConcurrentHashMap<Long/*brokerId*/, Long/*lastCaughtUpTimestamp*/> connectionCaughtUpTimeTable = new ConcurrentHashMap<>();
+    // org.apache.rocketmq.broker.controller.ReplicasManager.doReportSyncStateSetChanged
     private final List<Consumer<Set<Long/*brokerId*/>>> syncStateSetChangedListeners = new ArrayList<>();
     private final Set<Long/*brokerId*/> syncStateSet = new HashSet<>();
     private final Set<Long> remoteSyncStateSet = new HashSet<>();
@@ -72,7 +78,7 @@ public class AutoSwitchHAService extends DefaultHAService {
 
     private EpochFileCache epochCache;
     private AutoSwitchHAClient haClient;
-
+    // controller 为 broker 分配的 id
     private Long localBrokerId = null;
 
     public AutoSwitchHAService() {
@@ -80,10 +86,14 @@ public class AutoSwitchHAService extends DefaultHAService {
 
     @Override
     public void init(final DefaultMessageStore defaultMessageStore) throws IOException {
+        // user.home/store/epochFileCheckpoint(默认)
         this.epochCache = new EpochFileCache(defaultMessageStore.getMessageStoreConfig().getStorePathEpochFile());
+        // 从 epochFileCheckpoint 文件中恢复 broker 的 epoch
         this.epochCache.initCacheFromFile();
         this.defaultMessageStore = defaultMessageStore;
+        // 用于接收 slave 的连接，存储在 org.apache.rocketmq.store.ha.DefaultHAService.connectionList
         this.acceptSocketService = new AutoSwitchAcceptSocketService(defaultMessageStore.getMessageStoreConfig());
+        // 向 slave 传输 commitlog
         this.groupTransferService = new GroupTransferService(this, defaultMessageStore);
         this.haConnectionStateNotificationService = new HAConnectionStateNotificationService(this, defaultMessageStore);
     }
@@ -118,6 +128,7 @@ public class AutoSwitchHAService extends DefaultHAService {
             LOGGER.warn("newMasterEpoch {} < lastEpoch {}, fail to change to master", masterEpoch, lastEpoch);
             return false;
         }
+        // 如果 broker 之前是 slave ,那么这里会销毁所有的 ha client 连接
         destroyConnections();
         // Stop ha client if needed
         if (this.haClient != null) {
@@ -125,19 +136,30 @@ public class AutoSwitchHAService extends DefaultHAService {
         }
 
         // Truncate dirty file
+        // 由于现在本 broker 节点的 commitlog 中包含无效的 msg ,比如之前是 slave, 从 master 同步过来的日志包含不完整的 msg
+        // 比如 master commitlog 中只同步过来半个 msg , 主从同步的粒度是字节，不是 msg, 所以 slave commitlog 中可能存在不完整的 msg (没来得及同步)
+        // 这里需要将这些无效的消息截断掉，从新修正 commitlog 以及 consumer queue
+        // 位于 truncateOffset 之后的消息全部截断
         final long truncateOffset = truncateInvalidMsg();
-
+        // master 当前的 MaxPhyOffset 与所有 slave 中 ackOffset 的最小值
         this.defaultMessageStore.setConfirmOffset(computeConfirmOffset());
 
         if (truncateOffset >= 0) {
+            // truncateOffset 之后的 commitlog ， consume queue 已经被截断
+            // 这里要修正 epoch ,将 truncateOffset 之后的 epoch 删除, 并持久化到 user.home/store/epochFileCheckpoint(默认) 文件中
             this.epochCache.truncateSuffixByOffset(truncateOffset);
         }
 
         // Append new epoch to epochFile
+        // 为本次 master 的选举创建新的 epoch , startOffset 为当前 commitlog 的 MaxPhyOffset
         final EpochEntry newEpochEntry = new EpochEntry(masterEpoch, this.defaultMessageStore.getMaxPhyOffset());
         if (this.epochCache.lastEpoch() >= masterEpoch) {
+            // 将 masterEpoch 之后的 epoch 删除
             this.epochCache.truncateSuffixByEpoch(masterEpoch);
         }
+        // 添加新的 epoch , 顺便会修正 epoch 之间 startOffset 与 endOffset 之间的连续
+        // 前一个 epoch 的 endOffset 是后一个 epoch 的 startOffset
+        // 最后一个 epoch 的 endOffset 是无限大
         this.epochCache.appendEntry(newEpochEntry);
 
         // Waiting consume queue dispatch
@@ -150,8 +172,9 @@ public class AutoSwitchHAService extends DefaultHAService {
         }
 
         if (defaultMessageStore.isTransientStorePoolEnable()) {
+            // 唤醒 commitRealTimeService 线程将 TransientStorePool 中的消息写入到 commitlog 中
             waitingForAllCommit();
-            defaultMessageStore.getTransientStorePool().setRealCommit(true);
+            defaultMessageStore.getTransientStorePool().setRealCommit(true); // 是否实时提交
         }
 
         LOGGER.info("TruncateOffset is {}, confirmOffset is {}, maxPhyOffset is {}", truncateOffset, this.defaultMessageStore.getConfirmOffset(), this.defaultMessageStore.getMaxPhyOffset());
@@ -169,14 +192,17 @@ public class AutoSwitchHAService extends DefaultHAService {
             return false;
         }
         try {
+            // 如果原来是 master , 这里要销毁所有 slave 的 ha connection
             destroyConnections();
             if (this.haClient == null) {
+                // 创建 haClient , 向 master 同步日志
                 this.haClient = new AutoSwitchHAClient(this, defaultMessageStore, this.epochCache, slaveId);
             } else {
                 this.haClient.reOpen();
             }
             this.haClient.updateMasterAddress(newMasterAddr);
             this.haClient.updateHaMasterAddress(null);
+            // 连接 master , ha 相关的 handshake , transfer 截断都是在这里处理
             this.haClient.start();
 
             if (defaultMessageStore.isTransientStorePoolEnable()) {
@@ -202,8 +228,10 @@ public class AutoSwitchHAService extends DefaultHAService {
             return false;
         }
         // Append new epoch to epochFile
+        // 新 epoch 的 startOffet 是当前 commitlog 的最大 offset
         final EpochEntry newEpochEntry = new EpochEntry(masterEpoch, this.defaultMessageStore.getMaxPhyOffset());
         if (this.epochCache.lastEpoch() >= masterEpoch) {
+            // 最后一个 epoch 的 endOffset 为无限大
             this.epochCache.truncateSuffixByEpoch(masterEpoch);
         }
         this.epochCache.appendEntry(newEpochEntry);
@@ -261,6 +289,7 @@ public class AutoSwitchHAService extends DefaultHAService {
 
     public void notifySyncStateSetChanged(final Set<Long> newSyncStateSet) {
         this.executorService.submit(() -> {
+            // org.apache.rocketmq.broker.controller.ReplicasManager.doReportSyncStateSetChanged
             syncStateSetChangedListeners.forEach(listener -> listener.accept(newSyncStateSet));
         });
         LOGGER.info("Notify the syncStateSet has been changed into {}.", newSyncStateSet);
@@ -273,11 +302,14 @@ public class AutoSwitchHAService extends DefaultHAService {
     public Set<Long> maybeShrinkSyncStateSet() {
         final Set<Long> newSyncStateSet = getLocalSyncStateSet();
         boolean isSyncStateSetChanged = false;
+        // 15s
         final long haMaxTimeSlaveNotCatchup = this.defaultMessageStore.getMessageStoreConfig().getHaMaxTimeSlaveNotCatchup();
         for (Map.Entry<Long, Long> next : this.connectionCaughtUpTimeTable.entrySet()) {
             final Long slaveBrokerId = next.getKey();
             if (newSyncStateSet.contains(slaveBrokerId)) {
                 final Long lastCaughtUpTimeMs = next.getValue();
+                // 如果 slave 的 lastCaughtUpTimeMs 超过 15s 没有更新，那么就会被踢出 SyncStateSet
+                // master 会不断地 transfer 日志到 slave , 即使没有日志可 transfer(slave caught up), 也会更新这里的 lastCaughtUpTimeMs
                 if ((System.currentTimeMillis() - lastCaughtUpTimeMs) > haMaxTimeSlaveNotCatchup) {
                     newSyncStateSet.remove(slaveBrokerId);
                     isSyncStateSetChanged = true;
@@ -291,6 +323,7 @@ public class AutoSwitchHAService extends DefaultHAService {
         while (iterator.hasNext()) {
             Long slaveBrokerId = iterator.next();
             if (!Objects.equals(slaveBrokerId, this.localBrokerId) && !this.connectionCaughtUpTimeTable.containsKey(slaveBrokerId)) {
+                // 剔除不活跃的 slave
                 iterator.remove();
                 isSyncStateSetChanged = true;
             }
@@ -311,6 +344,7 @@ public class AutoSwitchHAService extends DefaultHAService {
         if (currentSyncStateSet.contains(slaveBrokerId)) {
             return;
         }
+        // 当前 SyncStateSet 中所有 slave 的 MaxOffset 的最⼩值
         final long confirmOffset = this.defaultMessageStore.getConfirmOffset();
         if (slaveMaxOffset >= confirmOffset) {
             final EpochEntry currentLeaderEpoch = this.epochCache.lastEntry();
@@ -412,14 +446,17 @@ public class AutoSwitchHAService extends DefaultHAService {
         }
         return info;
     }
-
+    // master 当前的 MaxPhyOffset 与所有 SyncStateSet 中的 slave  ackOffset 的最小值
     public long computeConfirmOffset() {
         final Set<Long> currentSyncStateSet = getSyncStateSet();
         long newConfirmOffset = this.defaultMessageStore.getMaxPhyOffset();
+        // 所有 slave 的 brokerId
         List<Long> idList = this.connectionList.stream().map(connection -> ((AutoSwitchHAConnection)connection).getSlaveId()).collect(Collectors.toList());
 
         // To avoid the syncStateSet is not consistent with connectionList.
         // Fix issue: https://github.com/apache/rocketmq/issues/6662
+        // slave 在 syncStateSet 中，却不在 idList（保存所有 slave 的 ha 连接）
+        // 异常情况，slave ha 连接丢失，却仍然在 syncStateSet 中
         for (Long syncId : currentSyncStateSet) {
             if (!idList.contains(syncId) && this.localBrokerId != null && !Objects.equals(syncId, this.localBrokerId)) {
                 LOGGER.warn("Slave {} is still in syncStateSet, but has lost its connection. So new offset can't be compute.", syncId);
@@ -430,10 +467,12 @@ public class AutoSwitchHAService extends DefaultHAService {
 
         for (HAConnection connection : this.connectionList) {
             final Long slaveId = ((AutoSwitchHAConnection) connection).getSlaveId();
+            // 必须存在于 syncStateSet
             if (currentSyncStateSet.contains(slaveId) && connection.getSlaveAckOffset() > 0) {
                 newConfirmOffset = Math.min(newConfirmOffset, connection.getSlaveAckOffset());
             }
         }
+        // master 当前的 MaxPhyOffset 与所有 SyncStateSet 中的 slave  ackOffset 的最小值
         return newConfirmOffset;
     }
 
@@ -491,8 +530,11 @@ public class AutoSwitchHAService extends DefaultHAService {
 
     /**
      * Try to truncate incomplete msg transferred from master.
+     * 由于现在本 broker 节点的 commitlog 中包含无效的 msg ,比如之前是 slave, 从 master 同步过来的日志包含不完整的 msg
+     * 比如 master commitlog 中只同步过来半个 msg , 主从同步的粒度是字节，不是 msg, 所以 slave commitlog 中可能存在不完整的 msg (没来得及同步)
      */
     public long truncateInvalidMsg() throws RocksDBException {
+        // Get number of the bytes that have been stored in commit log and not yet dispatched to consume queue.
         long dispatchBehind = this.defaultMessageStore.dispatchBehindBytes();
         if (dispatchBehind <= 0) {
             LOGGER.info("Dispatch complete, skip truncate");
@@ -502,8 +544,13 @@ public class AutoSwitchHAService extends DefaultHAService {
         boolean doNext = true;
 
         // Here we could use reputFromOffset in DefaultMessageStore directly.
+        // reputFromOffset 之前的内容已经构建好相关索引了，需要检查的是 reputFromOffset 到 ConfirmOffset 这段内容
+        // 如果出现无效的消息就截断
         long reputFromOffset = this.defaultMessageStore.getReputFromOffset();
+        // 开始查找需要截断的位置
         do {
+            // 查找 reputFromOffset 所在的 mappedFile, 返回 [reputFromOffset , ...) 范围的 buffer
+            // 还没有 reput 的内容
             SelectMappedBufferResult result = this.defaultMessageStore.getCommitLog().getData(reputFromOffset);
             if (result == null) {
                 break;
@@ -514,17 +561,23 @@ public class AutoSwitchHAService extends DefaultHAService {
 
                 int readSize = 0;
                 while (readSize < result.getSize()) {
+                    // 校验 buffer 中未 reput 的消息内容
                     DispatchRequest dispatchRequest = this.defaultMessageStore.getCommitLog().checkMessageAndReturnSize(result.getByteBuffer(), false, false);
                     if (dispatchRequest.isSuccess()) {
                         int size = dispatchRequest.getMsgSize();
                         if (size > 0) {
+                            // 有效消息 size 累加，直到找到无效的消息停止累加，而 reputFromOffset 就是截断位置，其之后的内容全部是无效的
                             reputFromOffset += size;
                             readSize += size;
                         } else {
+                            // 现在 reputFromOffset 所在的 commitlog 已经校验完了，全部有效
+                            // 开始校验下一个 commitlog
                             reputFromOffset = this.defaultMessageStore.getCommitLog().rollNextFile(reputFromOffset);
                             break;
                         }
                     } else {
+                        // 校验到此为止，已经找到阶段位置了，就是累加之后的 reputFromOffset
+                        // 此时 reputFromOffset 之后的消息都是无效的
                         doNext = false;
                         break;
                     }
@@ -533,8 +586,11 @@ public class AutoSwitchHAService extends DefaultHAService {
                 result.release();
             }
         } while (reputFromOffset < this.defaultMessageStore.getMaxPhyOffset() && doNext);
-
+        // 由于在校验 commitlog 中的消息的时候，reputFromOffset 也会增加
+        // 所以这里的 reputFromOffset 指的是 commitlog 中有效的 msg offset
         LOGGER.info("Truncate commitLog to {}", reputFromOffset);
+        // 这里会将无效的 msg 都截断掉（reputFromOffset 之前的全都是已经校验过的有效 msg）
+        // 涉及截断 commit log 和 consume queue
         this.defaultMessageStore.truncateDirtyFiles(reputFromOffset);
         return reputFromOffset;
     }

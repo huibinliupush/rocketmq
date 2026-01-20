@@ -43,9 +43,9 @@ import org.apache.rocketmq.store.config.MessageStoreConfig;
 public class DefaultHAService implements HAService {
 
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
-
+    // slave 的 ha connection 个数
     protected final AtomicInteger connectionCount = new AtomicInteger(0);
-
+    // 所有 slave 的 ha 连接（AutoSwitchHAConnection）
     protected final List<HAConnection> connectionList = new LinkedList<>();
 
     protected AcceptSocketService acceptSocketService;
@@ -53,6 +53,7 @@ public class DefaultHAService implements HAService {
     protected DefaultMessageStore defaultMessageStore;
 
     protected WaitNotifyObject waitNotifyObject = new WaitNotifyObject();
+    // 针对所有 slave ha connection ， master transfer 到 slave 的最大 offset
     protected AtomicLong push2SlaveMaxOffset = new AtomicLong(0);
 
     protected GroupTransferService groupTransferService;
@@ -106,6 +107,8 @@ public class DefaultHAService implements HAService {
 
     public void notifyTransferSome(final long offset) {
         for (long value = this.push2SlaveMaxOffset.get(); offset > value; ) {
+            // 如果 slave 的 ack offset 比当前 push2SlaveMaxOffset 大
+            // 将 salve 刚刚 ack 的 offset 更新到 push2SlaveMaxOffset
             boolean ok = this.push2SlaveMaxOffset.compareAndSet(value, offset);
             if (ok) {
                 this.groupTransferService.notifyTransferSome();
@@ -288,6 +291,7 @@ public class DefaultHAService implements HAService {
 
         public AcceptSocketService(final MessageStoreConfig messageStoreConfig) {
             this.messageStoreConfig = messageStoreConfig;
+            // 10912
             this.socketAddressListen = new InetSocketAddress(messageStoreConfig.getHaListenPort());
         }
 
@@ -337,20 +341,25 @@ public class DefaultHAService implements HAService {
 
             while (!this.isStopped()) {
                 try {
+                    // 等待 slave 的 ha 连接
                     this.selector.select(1000);
+                    // ServerSocketChannel 会注册到 selector 上，监听 accept 事件
                     Set<SelectionKey> selected = this.selector.selectedKeys();
 
                     if (selected != null) {
                         for (SelectionKey k : selected) {
                             if (k.isAcceptable()) {
+                                // slave 的 ha 连接
                                 SocketChannel sc = ((ServerSocketChannel) k.channel()).accept();
 
                                 if (sc != null) {
                                     DefaultHAService.log.info("HAService receive new connection, "
                                         + sc.socket().getRemoteSocketAddress());
                                     try {
+                                        // 创建 AutoSwitchHAConnection
                                         HAConnection conn = createConnection(sc);
                                         DefaultHAService.this.addConnection(conn);
+                                        // 启动 slave ha connection 上的读写请求处理逻辑
                                         conn.start();
                                     } catch (Exception e) {
                                         log.error("new HAConnection exception", e);

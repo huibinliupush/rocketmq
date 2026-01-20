@@ -37,6 +37,8 @@ public class ControllerClosure implements Closure {
     private Task task;
 
     public ControllerClosure(RemotingCommand requestEvent) {
+        // 存储的目的是为了让本机 raft 节点的状态机直接获取，不需要序列化
+        // org.apache.rocketmq.controller.impl.JRaftControllerStateMachine.processEvent
         this.requestEvent = requestEvent;
         this.future = new CompletableFuture<>();
         this.task = null;
@@ -72,7 +74,11 @@ public class ControllerClosure implements Closure {
             return task;
         }
         task = new Task();
+        // Closure done 任务的回调，在任务完成的时候通知此对象，无论成功还是失败。
+        // 这个 closure 将在 StateMachine#onApply(iterator) 方法应用到状态机的时候，可以拿到并调用，一般用于客户端应答的返回。
         task.setDone(this);
+        // encode request , 其他 raft 节点状态机在处理 request 的时候需要从 task data 中反序列化
+        // org.apache.rocketmq.controller.impl.JRaftControllerStateMachine.processEvent
         task.setData(requestEvent.encode());
         return task;
     }

@@ -34,6 +34,11 @@ public class NettyEncoder extends MessageToByteEncoder<RemotingCommand> {
     public void encode(ChannelHandlerContext ctx, RemotingCommand remotingCommand, ByteBuf out)
         throws Exception {
         try {
+            // By default, the decoder assumes that the length field represents the number of the bytes that follows the length field.
+            // length : 4(headerLength) + headerSize + bodySize
+            // headerLength: serializeType(1字节) + headerSize（3字节）
+            // header
+            // body
             remotingCommand.fastEncodeHeader(out);
             byte[] body = remotingCommand.getBody();
             if (body != null) {

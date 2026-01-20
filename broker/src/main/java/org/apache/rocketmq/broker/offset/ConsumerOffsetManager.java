@@ -46,7 +46,7 @@ public class ConsumerOffsetManager extends ConfigManager {
     public static final String TOPIC_GROUP_SEPARATOR = "@";
 
     protected DataVersion dataVersion = new DataVersion();
-
+    // 加载自 user.home/store/config/consumerOffset.json
     protected ConcurrentMap<String/* topic@group */, ConcurrentMap<Integer, Long>> offsetTable =
         new ConcurrentHashMap<>(512);
 
@@ -240,7 +240,7 @@ public class ConsumerOffsetManager extends ConfigManager {
     public long queryOffset(final String group, final String topic, final int queueId) {
         // topic@group
         String key = topic + TOPIC_GROUP_SEPARATOR + group;
-
+        // https://github.com/apache/rocketmq/wiki/RIP-48-Enhance-server-side-offset-management-ability
         if (this.brokerController.getBrokerConfig().isUseServerSideResetOffset()) {
             Map<Integer, Long> reset = resetOffsetTable.get(key);
             if (null != reset && reset.containsKey(queueId)) {

@@ -45,6 +45,7 @@ public class NamesrvStartup {
 
     private static final Logger log = LoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
     private static final Logger logConsole = LoggerFactory.getLogger(LoggerName.NAMESRV_CONSOLE_LOGGER_NAME);
+    // -c 指定的 configFile 中的配置内容
     private static Properties properties = null;
     private static NamesrvConfig namesrvConfig = null;
     private static NettyServerConfig nettyServerConfig = null;
@@ -58,6 +59,8 @@ public class NamesrvStartup {
 
     public static NamesrvController main0(String[] args) {
         try {
+            // 从 commandline 以及 configFile 中加载 nameServer 以及 controller 的相关配置
+            // 并初始化相关的配置类
             parseCommandlineAndConfigFile(args);
             NamesrvController controller = createAndStartNamesrvController();
             return controller;

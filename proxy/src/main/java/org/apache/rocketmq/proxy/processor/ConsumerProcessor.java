@@ -128,6 +128,8 @@ public class ConsumerProcessor extends AbstractProcessor {
             PopMessageRequestHeader requestHeader = new PopMessageRequestHeader();
             requestHeader.setConsumerGroup(consumerGroup);
             requestHeader.setTopic(topic);
+            // queueId 为 -1 ， see : org.apache.rocketmq.proxy.service.route.MessageQueueSelector.buildBrokerActingQueues
+            // broker 端对于 queueId = -1 的处理， see : PopMessageProcesser
             requestHeader.setQueueId(messageQueue.getQueueId());
             requestHeader.setMaxMsgNums(maxMsgNums);
             requestHeader.setInvisibleTime(invisibleTime);

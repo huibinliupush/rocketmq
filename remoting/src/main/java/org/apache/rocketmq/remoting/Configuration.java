@@ -37,7 +37,9 @@ public class Configuration {
     private List<Object> configObjectList = new ArrayList<>(4);
     private String storePath;
     private boolean storePathFromConfig = false;
+    // ControllerConfig
     private Object storePathObject;
+    // org.apache.rocketmq.common.ControllerConfig.configStorePath
     private Field storePathField;
     private DataVersion dataVersion = new DataVersion();
     private ReadWriteLock readWriteLock = new ReentrantReadWriteLock();

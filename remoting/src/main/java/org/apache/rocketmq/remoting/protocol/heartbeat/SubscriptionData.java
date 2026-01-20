@@ -30,7 +30,9 @@ public class SubscriptionData implements Comparable<SubscriptionData> {
     private boolean classFilterMode = false;
     private String topic;
     private String subString;
+    // 订阅的 tag 集合
     private Set<String> tagsSet = new HashSet<>();
+    // 订阅的 tag hashcode 集合
     private Set<Integer> codeSet = new HashSet<>();
     private long subVersion = System.currentTimeMillis();
     private String expressionType = ExpressionType.TAG;

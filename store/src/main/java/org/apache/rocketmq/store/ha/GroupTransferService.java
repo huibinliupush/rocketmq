@@ -75,7 +75,9 @@ public class GroupTransferService extends ServiceThread {
             lock.unlock();
         }
     }
-
+    // 在 auto ha switch 的模式下，master 的 commitlog 是通过 ha 传输到 slave
+    // 这里会等待 ha 的传输，如果 requestsRead 队列中，请求传输的内容已经通过 ha 传过去了 transferOK = ok ，那么就无需等待了
+    // 如果还没有就等待传输完成直到 timeout
     private void doWaitTransfer() {
         if (!this.requestsRead.isEmpty()) {
             for (CommitLog.GroupCommitRequest req : this.requestsRead) {
@@ -90,6 +92,7 @@ public class GroupTransferService extends ServiceThread {
                     }
 
                     if (!allAckInSyncStateSet && req.getAckNums() <= 1) {
+                        // 要 Transfer 的日志已经通过 ha 传输过去了，这里就不需要在 Transfer 了
                         transferOK = haService.getPush2SlaveMaxOffset().get() >= req.getNextOffset();
                         continue;
                     }

@@ -45,6 +45,7 @@ import org.apache.rocketmq.store.timer.TimerMetrics;
 public class SlaveSynchronize {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final BrokerController brokerController;
+    // broker 变为 master 的时候，会置为 null
     private volatile String masterAddr = null;
 
     public SlaveSynchronize(BrokerController brokerController) {
@@ -63,7 +64,9 @@ public class SlaveSynchronize {
     }
 
     public void syncAll() {
+        // 向 master 同步 TopicConfig ， TopicQueueMapping
         this.syncTopicConfig();
+        // 同步 ConsumerOffset （消费者组的消费进度）
         this.syncConsumerOffset();
         this.syncDelayOffset();
         this.syncSubscriptionGroupConfig();
@@ -76,16 +79,19 @@ public class SlaveSynchronize {
 
     private void syncTopicConfig() {
         String masterAddrBak = this.masterAddr;
+        // slave 才会执行向 master 同步 TopicConfig
         if (masterAddrBak != null && !masterAddrBak.equals(brokerController.getBrokerAddr())) {
             try {
                 TopicConfigAndMappingSerializeWrapper topicWrapper =
                         this.brokerController.getBrokerOuterAPI().getAllTopicConfig(masterAddrBak);
                 TopicConfigManager topicConfigManager = this.brokerController.getTopicConfigManager();
+                // slave 与 master 的 DataVersion 不同的时候，topicConfig 数据以 master 的为准，原来的 slave 的会全部删除
                 if (!topicConfigManager.getDataVersion().equals(topicWrapper.getDataVersion())) {
-
+                    // 更新 slave 的 DataVersion，以 master 的为准
                     topicConfigManager.getDataVersion().assignNewOne(topicWrapper.getDataVersion());
-
+                    // master 的 TopicConfigTable
                     ConcurrentMap<String, TopicConfig> newTopicConfigTable = topicWrapper.getTopicConfigTable();
+                    // slave 的 TopicConfigTable
                     ConcurrentMap<String, TopicConfig> topicConfigTable = topicConfigManager.getTopicConfigTable();
 
                     //delete
@@ -95,14 +101,17 @@ public class SlaveSynchronize {
                         if (!newTopicConfigTable.containsKey(entry.getKey())) {
                             iterator.remove();
                         }
+                        // 新旧集合中共同存在的 topicConfig ，在删除的时候需要 updateDataVersion ， persisit
                         topicConfigManager.deleteTopicConfig(entry.getKey());
                     }
 
                     //update
+                    // 以 master 的 TopicConfig 为准
                     newTopicConfigTable.values().forEach(topicConfigManager::updateSingleTopicConfigWithoutPersist);
-
+                    // 持久化到文件 System.getProperty("user.home") + File.separator + "store" /config/topics.json
                     topicConfigManager.persist();
                 }
+                // DataVersion 不同，则更新 TopicQueueMapping
                 if (topicWrapper.getTopicQueueMappingDetailMap() != null
                         && !topicWrapper.getMappingDataVersion().equals(this.brokerController.getTopicQueueMappingManager().getDataVersion())) {
                     this.brokerController.getTopicQueueMappingManager().getDataVersion()
@@ -126,6 +135,7 @@ public class SlaveSynchronize {
 
     private void syncConsumerOffset() {
         String masterAddrBak = this.masterAddr;
+        // 确保是 slave broker
         if (masterAddrBak != null && !masterAddrBak.equals(brokerController.getBrokerAddr())) {
             try {
                 ConsumerOffsetSerializeWrapper offsetWrapper =
@@ -133,6 +143,7 @@ public class SlaveSynchronize {
                 this.brokerController.getConsumerOffsetManager().getOffsetTable()
                         .putAll(offsetWrapper.getOffsetTable());
                 this.brokerController.getConsumerOffsetManager().getDataVersion().assignNewOne(offsetWrapper.getDataVersion());
+                // 持久化到 user.home/store/config/consumerOffset.json
                 this.brokerController.getConsumerOffsetManager().persist();
                 LOGGER.info("Update slave consumer offset from master, {}", masterAddrBak);
             } catch (Exception e) {
@@ -148,7 +159,7 @@ public class SlaveSynchronize {
                 String delayOffset =
                         this.brokerController.getBrokerOuterAPI().getAllDelayOffset(masterAddrBak);
                 if (delayOffset != null) {
-
+                    // user.home/config/delayOffset.json
                     String fileName =
                             StorePathConfigHelper.getDelayOffsetStorePath(this.brokerController
                                     .getMessageStoreConfig().getStorePathRootDir());
@@ -190,6 +201,7 @@ public class SlaveSynchronize {
                         if (!newSubscriptionGroupTable.containsKey(configEntry.getKey())) {
                             iterator.remove();
                         }
+                        // 新旧集合中共同存在的 SubscriptionGroupConfig ，在删除的时候需要 updateDataVersion ， persisit
                         subscriptionGroupManager.deleteSubscriptionGroupConfig(configEntry.getKey());
                     }
                     // update

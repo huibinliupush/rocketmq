@@ -166,18 +166,20 @@ public class UpdateSubGroupSubCommand implements SubCommand {
                 subscriptionGroupConfig.setGroupRetryPolicy(groupRetryPolicy);
             }
 
-            // brokerId
+            // brokerId，建议从哪个 broker 消费，但指定为 slave broker 时，需开启 slaveReadEnable
+            // 默认为 master
             if (commandLine.hasOption('i')) {
                 subscriptionGroupConfig.setBrokerId(Long.parseLong(commandLine.getOptionValue('i').trim()));
             }
 
-            // whichBrokerWhenConsumeSlowly
+            // whichBrokerWhenConsumeSlowly ， 如果Broker建议从slave消费，配置决定从哪个slave消费
+            // 默认为 1
             if (commandLine.hasOption('w')) {
                 subscriptionGroupConfig.setWhichBrokerWhenConsumeSlowly(Long.parseLong(commandLine
                     .getOptionValue('w').trim()));
             }
 
-            // notifyConsumerIdsChanged
+            // notifyConsumerIdsChanged ， 当消费者数量变化时是否通知其他消费者负载均衡
             if (commandLine.hasOption('a')) {
                 subscriptionGroupConfig.setNotifyConsumerIdsChangedEnable(Boolean.parseBoolean(commandLine
                     .getOptionValue('a').trim()));

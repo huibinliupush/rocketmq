@@ -103,12 +103,19 @@ public class UtilAll {
 
         return sb.toString();
     }
-
+    // 将一个数字（offset）格式化为一个至少20位整数、没有小数部分、不使用分组分隔符（如千位分隔符）的字符串。
     public static String offset2FileName(final long offset) {
         final NumberFormat nf = NumberFormat.getInstance();
+        // 设置整数部分的最小位数。如果整数部分不足20位，会在前面补0直到达到20位。
+        // 注意：如果offset的整数部分超过20位，那么会按照实际位数显示，不会截断。因为setMinimumIntegerDigits只设置最小位数，不限制最大位数。
         nf.setMinimumIntegerDigits(20);
+        // 设置小数部分的最大位数为0，即不显示小数部分
+        // 另外，由于设置了最大小数位数为0，如果offset有小数部分，小数部分会被四舍五入（取决于NumberFormat的舍入模式，默认是HALF_EVEN）到整数。
+        //但是，这里传入的offset可能是长整型或整型，所以没有小数部分。如果offset是浮点数，则需要注意舍入问题。
         nf.setMaximumFractionDigits(0);
+        // 设置不使用分组（例如，将1000显示为1000而不是1,000）
         nf.setGroupingUsed(false);
+        // 例如，如果offset是12345，那么格式化后的字符串将是"0000000000000012345"（一共20位，前面补0）
         return nf.format(offset);
     }
 
@@ -143,10 +150,15 @@ public class UtilAll {
             cal.get(Calendar.MILLISECOND));
     }
 
+    // 计算并返回下一个凌晨（即第二天00:00:00.000）的时间戳（毫秒数）
     public static long computeNextMorningTimeMillis() {
+        // 创建一个Calendar实例，默认使用当前系统时间和时区
         Calendar cal = Calendar.getInstance();
+        // 确保Calendar的时间精确设置为当前系统时间的毫秒数
         cal.setTimeInMillis(System.currentTimeMillis());
+        // 将日期增加1天（明天）
         cal.add(Calendar.DAY_OF_MONTH, 1);
+        // 将小时设置为0（24小时制，表示0点）
         cal.set(Calendar.HOUR_OF_DAY, 0);
         cal.set(Calendar.MINUTE, 0);
         cal.set(Calendar.SECOND, 0);

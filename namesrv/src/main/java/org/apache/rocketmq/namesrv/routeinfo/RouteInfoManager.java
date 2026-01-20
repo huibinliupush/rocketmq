@@ -94,6 +94,7 @@ public class RouteInfoManager {
     }
 
     public void start() {
+        // BatchUnregistrationService a mechanism to unregister brokers in batch manner, which speeds up broker-offline
         this.unRegisterService.start();
     }
 

@@ -178,7 +178,7 @@ public class MessageStoreConfig {
     private int flushCommitLogLeastPages = 4;
     // How many pages are to be committed when commit data to file
     private int commitCommitLogLeastPages = 4;
-    // Flush page size when the disk in warming state
+    // Flush page size when the disk in warming state (16)
     private int flushLeastPagesWhenWarmMapedFile = 1024 / 4 * 16;
     // How many pages are to be flushed when flush ConsumeQueue
     private int flushConsumeQueueLeastPages = 2;
@@ -193,6 +193,8 @@ public class MessageStoreConfig {
     private int maxTransferBytesOnMessageInDisk = 1024 * 64;
     @ImportantField
     private int maxTransferCountOnMessageInDisk = 8;
+    // 保留在内存中的消息 size 为 机器内存总量的百分之 accessMessageInMemoryMaxRatio
+    // slave broker 为 accessMessageInMemoryMaxRatio - 10
     @ImportantField
     private int accessMessageInMemoryMaxRatio = 40;
     @ImportantField
@@ -397,7 +399,7 @@ public class MessageStoreConfig {
 
     private boolean coldDataFlowControlEnable = false;
     private boolean coldDataScanEnable = false;
-    private boolean dataReadAheadEnable = true;
+    private boolean dataReadAheadEnable = true; // 是否对文件进行预读
     private int timerColdDataCheckIntervalMs = 60 * 1000;
     private int sampleSteps = 32;
     private int accessMessageInMemoryHotRatio = 26;

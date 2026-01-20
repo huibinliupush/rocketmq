@@ -60,7 +60,7 @@ public class ProxyConfig implements ConfigFile {
     private String proxyName = StringUtils.isEmpty(localHostName) ? "DEFAULT_PROXY" : localHostName;
 
     private String localServeAddr = "";
-
+    // 默认设置为 ${rocketMQClusterName}
     private String heartbeatSyncerTopicClusterName = "";
     private int heartbeatSyncerThreadPoolNums = 4;
     private int heartbeatSyncerThreadPoolQueueCapacity = 100;
@@ -208,6 +208,9 @@ public class ProxyConfig implements ConfigFile {
 
     private boolean useDelayLevel = false;
     private String messageDelayLevel = "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h";
+    // level 1 , 1s
+    // level 2 , 5s
+    // value 单位为毫秒
     private transient ConcurrentSkipListMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable = new ConcurrentSkipListMap<>();
 
     private String metricCollectorMode = MetricCollectorMode.OFF.getModeString();
@@ -239,6 +242,7 @@ public class ProxyConfig implements ConfigFile {
     // remoting
     private boolean enableRemotingLocalProxyGrpc = true;
     private int localProxyConnectTimeoutMs = 3000;
+    // 默认设置为 localServeAddr
     private String remotingAccessAddr = "";
     private int remotingListenPort = 8080;
 
@@ -273,6 +277,7 @@ public class ProxyConfig implements ConfigFile {
 
     @Override
     public void initData() {
+        // 初始化 delayLevelTable
         parseDelayLevel();
         if (StringUtils.isEmpty(localServeAddr)) {
             this.localServeAddr = NetworkUtil.getLocalAddress();

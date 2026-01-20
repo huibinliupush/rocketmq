@@ -53,11 +53,12 @@ import java.util.concurrent.TimeoutException;
 public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.CONTROLLER_LOGGER_NAME);
     private JRaftController controller;
+    // org.apache.rocketmq.controller.ControllerManager.onBrokerInactive
     private final List<BrokerLifecycleListener> brokerLifecycleListeners = new ArrayList<>();
     private final ScheduledExecutorService scheduledService;
     private final ExecutorService executor;
     private final ControllerConfig controllerConfig;
-
+    // broker 向 controller 发送心跳，会将 broker 的相关信息（BrokerIdentityInfo），channel 存储在这里
     private final Map<Channel, BrokerIdentityInfo> brokerChannelIdentityInfoMap = new HashMap<>();
 
 
@@ -93,9 +94,10 @@ public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
 
     @Override
     public void registerBrokerLifecycleListener(BrokerLifecycleListener listener) {
+        // org.apache.rocketmq.controller.ControllerManager.onBrokerInactive
         brokerLifecycleListeners.add(listener);
     }
-
+    // 每 5s 扫描一次 no active broker , see : start 方法
     @Override
     public void onBrokerHeartbeat(String clusterName, String brokerName, String brokerAddr, Long brokerId,
         Long timeoutMillis, Channel channel, Integer epoch, Long maxOffset, Long confirmOffset,
@@ -110,8 +112,8 @@ public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
         long realBrokerId = Optional.ofNullable(brokerId).orElse(-1L);
         long realMaxOffset = Optional.ofNullable(maxOffset).orElse(-1L);
         long realConfirmOffset = Optional.ofNullable(confirmOffset).orElse(-1L);
-        long realTimeoutMillis = Optional.ofNullable(timeoutMillis).orElse(DEFAULT_BROKER_CHANNEL_EXPIRED_TIME);
-        int realElectionPriority = Optional.ofNullable(electionPriority).orElse(Integer.MAX_VALUE);
+        long realTimeoutMillis = Optional.ofNullable(timeoutMillis).orElse(DEFAULT_BROKER_CHANNEL_EXPIRED_TIME);// 10s
+        int realElectionPriority = Optional.ofNullable(electionPriority).orElse(Integer.MAX_VALUE);// 值越小，越可能当选 master
         BrokerLiveInfo liveInfo = new BrokerLiveInfo(brokerName,
             brokerAddr,
             realBrokerId,
@@ -124,6 +126,7 @@ public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
             realConfirmOffset);
         log.info("broker {} heart beat", brokerIdentityInfo);
         RaftBrokerHeartBeatEventRequest requestHeader = new RaftBrokerHeartBeatEventRequest(brokerIdentityInfo, liveInfo);
+        // 只能由 active controller 将 broker 的心跳应用于 raft
         CompletableFuture<RemotingCommand> future = controller.onBrokerHeartBeat(requestHeader);
         try {
             RemotingCommand remotingCommand = future.get(5, java.util.concurrent.TimeUnit.SECONDS);
@@ -194,6 +197,8 @@ public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
         }
 
         log.info("start scan not active broker");
+        // 里面包含了 checkTimeMillis ，后续会和所有 broker 的 lastUpdateTime 比较
+        // 如果超时，说明该 broker no active
         CheckNotActiveBrokerRequest requestHeader = new CheckNotActiveBrokerRequest();
         CompletableFuture<RemotingCommand> future = this.controller.checkNotActiveBroker(requestHeader);
         try {
@@ -201,24 +206,33 @@ public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
             if (remotingCommand.getCode() != ResponseCode.SUCCESS) {
                 throw new RuntimeException("check not active broker return invalid code, code: " + remotingCommand.getCode());
             }
+            // BrokerIdentityInfo in needReElectBrokerNames does not have brokerId or clusterName
             List<BrokerIdentityInfo> notActiveAndNeedReElectBrokerIdentityInfoList = JSON.parseObject(remotingCommand.getBody(), new TypeReference<List<BrokerIdentityInfo>>() {
             }.getType());
             if (notActiveAndNeedReElectBrokerIdentityInfoList != null && !notActiveAndNeedReElectBrokerIdentityInfoList.isEmpty()) {
                 notActiveAndNeedReElectBrokerIdentityInfoList.forEach(brokerIdentityInfo -> {
+                    // 每次 broker 心跳都会更新这里，关闭 no active broker 的 channel, 以及从 brokerChannelIdentityInfoMap 删除 no active broker
                     Iterator<Map.Entry<Channel, BrokerIdentityInfo>> iterator = brokerChannelIdentityInfoMap.entrySet().iterator();
                     Channel channel = null;
+                    // 遍历 brokerChannelIdentityInfoMap，查找 brokerIdentityInfo（no active）
                     while (iterator.hasNext()) {
                         Map.Entry<Channel, BrokerIdentityInfo> entry = iterator.next();
+                        // BrokerIdentityInfo in needReElectBrokerNames does not have brokerId or clusterName
                         if (entry.getValue().getBrokerId() == null) {
                             continue;
                         }
                         if (entry.getValue().equals(brokerIdentityInfo)) {
                             channel = entry.getKey();
+                            // 关闭 not active broker channel
                             RemotingHelper.closeChannel(entry.getKey());
+                            // 从 brokerChannelIdentityInfoMap 中删除
                             iterator.remove();
                             break;
                         }
                     }
+                    // 回调 org.apache.rocketmq.controller.ControllerManager.onBrokerInactive （判断是否需要重新选主）
+                    // BrokerIdentityInfo in needReElectBrokerNames does not have brokerId or clusterName
+                    // 如果 BrokerIdentityInfo 的 brokerId ， clusterName 都为 null ,那么该 brokerName 副本组需要重新选组
                     this.executor.submit(() -> notifyBrokerInActive(brokerIdentityInfo.getClusterName(), brokerIdentityInfo.getBrokerName(), brokerIdentityInfo.getBrokerId()));
                     log.warn("The broker channel {} expired, brokerInfo {}", channel, brokerIdentityInfo);
                 });

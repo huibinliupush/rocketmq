@@ -163,7 +163,8 @@ public class DefaultMessageStore implements MessageStore {
 
     private volatile boolean shutdown = true;
     protected boolean notifyMessageArriveInBatch = false;
-
+    // storePath/checkpoint 文件
+    // 定时 flush , see : org.apache.rocketmq.store.DefaultMessageStore.addScheduleTask
     protected StoreCheckpoint storeCheckpoint;
     private TimerMessageStore timerMessageStore;
 
@@ -188,9 +189,11 @@ public class DefaultMessageStore implements MessageStore {
     private MessageStore masterStoreInProcess = null;
 
     private volatile long masterFlushedOffset = -1L;
-
+    // commitlog(全局)的最大 offset
+    // 但这个 MaxOffset 有点歧义，它其实表达是 commitlog 的 maxOffset ，并不是 commitlog 中存储真实消息的 maxOffset
+    // 比如现在只有一个 commitlog 文件，那么他的 maxOffset 就是 1G ， 但可能真正写入的消息也就是 1K
     private volatile long brokerInitMaxOffset = -1L;
-
+    // see : org.apache.rocketmq.broker.BrokerController.registerMessageStoreHook
     private final List<PutMessageHook> putMessageHookList = new ArrayList<>();
 
     private SendMessageBackHook sendMessageBackHook;
@@ -208,7 +211,7 @@ public class DefaultMessageStore implements MessageStore {
 
     private final DispatchRequestOrderlyQueue dispatchRequestOrderlyQueue = new DispatchRequestOrderlyQueue(dispatchRequestOrderlyQueueSize);
 
-    private long stateMachineVersion = 0L;
+    private long stateMachineVersion = 0L; // 当前 master epoch
 
     // this is a unmodifiableMap
     private final ConcurrentMap<String, TopicConfig> topicConfigTable;
@@ -219,6 +222,7 @@ public class DefaultMessageStore implements MessageStore {
     public DefaultMessageStore(final MessageStoreConfig messageStoreConfig, final BrokerStatsManager brokerStatsManager,
         final MessageArrivingListener messageArrivingListener, final BrokerConfig brokerConfig,
         final ConcurrentMap<String, TopicConfig> topicConfigTable) throws IOException {
+        // NotifyMessageArrivingListener
         this.messageArrivingListener = messageArrivingListener;
         this.brokerConfig = brokerConfig;
         this.messageStoreConfig = messageStoreConfig;
@@ -243,6 +247,7 @@ public class DefaultMessageStore implements MessageStore {
 
         if (!messageStoreConfig.isEnableDLegerCommitLog() && !this.messageStoreConfig.isDuplicationEnable()) {
             if (brokerConfig.isEnableControllerMode()) {
+                // 主从交互的逻辑在这里
                 this.haService = new AutoSwitchHAService();
                 LOGGER.warn("Load AutoSwitch HA Service: {}", AutoSwitchHAService.class.getSimpleName());
             } else {
@@ -254,7 +259,7 @@ public class DefaultMessageStore implements MessageStore {
             }
         }
 
-        if (!messageStoreConfig.isEnableBuildConsumeQueueConcurrently()) {
+        if (!messageStoreConfig.isEnableBuildConsumeQueueConcurrently()) { // false
             this.reputMessageService = new ReputMessageService();
         } else {
             this.reputMessageService = new ConcurrentReputMessageService();
@@ -343,14 +348,18 @@ public class DefaultMessageStore implements MessageStore {
         boolean result = true;
 
         try {
+            // user.home/store/abort  文件存在说明 broker 是异常关闭
             boolean lastExitOK = !this.isTempFileExist();
             LOGGER.info("last shutdown {}, store path root dir: {}",
                 lastExitOK ? "normally" : "abnormally", messageStoreConfig.getStorePathRootDir());
 
             // load Commit Log
+            // 加载 storePath/commitlog 下的所有文件
             result = this.commitLog.load();
 
             // load Consume Queue
+            // 加载 storePath/consumequeue 下的所有文件，按照 topic , queueid 进行组织
+            // 根据 cqType 区分 ConsumerQueue 和 BatchConsumerQueue
             result = result && this.consumeQueueStore.load();
 
             if (messageStoreConfig.isEnableCompaction()) {
@@ -358,7 +367,9 @@ public class DefaultMessageStore implements MessageStore {
             }
 
             if (result) {
+                // storePath/checkpoint 文件
                 loadCheckPoint();
+                // storePath/index 文件
                 result = this.indexService.load(lastExitOK);
                 this.recover(lastExitOK);
                 LOGGER.info("message store recover end, and the max phy offset = {}", this.getMaxPhyOffset());
@@ -381,6 +392,7 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     public void loadCheckPoint() throws IOException {
+        // storePath/checkpoint 文件
         this.storeCheckpoint =
             new StoreCheckpoint(
                 StorePathConfigHelper.getStoreCheckpoint(this.messageStoreConfig.getStorePathRootDir()));
@@ -394,6 +406,10 @@ public class DefaultMessageStore implements MessageStore {
     @Override
     public void start() throws Exception {
         if (!messageStoreConfig.isEnableDLegerCommitLog() && !this.messageStoreConfig.isDuplicationEnable()) {
+            // 初始化 epoch cache
+            // 创建 acceptSocketService 接收 slave 的 haConnection
+            // 创建 groupTransferService ， 用于后续向 slave 发送 commitlog
+            // haConnectionStateNotificationService 监听 slave haconnection 的状态
             this.haService.init(this);
         }
 
@@ -426,6 +442,7 @@ public class DefaultMessageStore implements MessageStore {
         this.storeStatsService.start();
 
         if (this.haService != null) {
+            // ha start，开始监听 slave 的 ha connection
             this.haService.start();
         }
 
@@ -713,7 +730,7 @@ public class DefaultMessageStore implements MessageStore {
     public CommitLog getCommitLog() {
         return commitLog;
     }
-
+    // 位于 offsetToTruncate 之后的消息全部需要截断
     public void truncateDirtyFiles(long offsetToTruncate) throws RocksDBException {
 
         LOGGER.info("truncate dirty files to {}", offsetToTruncate);
@@ -722,17 +739,19 @@ public class DefaultMessageStore implements MessageStore {
             LOGGER.info("no need to truncate files, truncate offset is {}, max physical offset is {}", offsetToTruncate, this.getMaxPhyOffset());
             return;
         }
-
+        // 由于此时 commitlog 中包含从 master 同步过来一般的不完整 msg , 所以要先停掉 reput service
         this.reputMessageService.shutdown();
-
+        // 从 commitlog 的哪里开始构建索引
         long oldReputFromOffset = this.reputMessageService.getReputFromOffset();
 
         // truncate consume queue
+        // 从 consumer queue 中删除无效的消息索引 （针对所有 topic 的所有 consume queue）
         this.truncateDirtyLogicFiles(offsetToTruncate);
 
         // truncate commitLog
+        // 从 commitLog 中删除无效的消息
         this.commitLog.truncateDirtyFiles(offsetToTruncate);
-
+        // 通过当前 commitlog 中最小的 minPhyOffset ，修正所有 consumerqueue 中的 minOffset（org.apache.rocketmq.store.ConsumeQueue.minLogicOffset）
         this.recoverTopicQueueTable();
 
         if (!messageStoreConfig.isEnableBuildConsumeQueueConcurrently()) {
@@ -744,7 +763,7 @@ public class DefaultMessageStore implements MessageStore {
         long resetReputOffset = Math.min(oldReputFromOffset, offsetToTruncate);
 
         LOGGER.info("oldReputFromOffset is {}, reset reput from offset to {}", oldReputFromOffset, resetReputOffset);
-
+        // 从 commitlog 修正后的位置处重新构建索引 consume queue
         this.reputMessageService.setReputFromOffset(resetReputOffset);
         this.reputMessageService.start();
     }
@@ -755,7 +774,7 @@ public class DefaultMessageStore implements MessageStore {
             LOGGER.info("no need to truncate files, truncate offset is {}, max physical offset is {}", offsetToTruncate, this.getMaxPhyOffset());
             return true;
         }
-
+        // 从 offset 开始能否解码出一个完整消息
         if (!isOffsetAligned(offsetToTruncate)) {
             LOGGER.error("offset {} is not align, truncate failed, need manual fix", offsetToTruncate);
             return false;
@@ -771,7 +790,7 @@ public class DefaultMessageStore implements MessageStore {
         if (mappedBufferResult == null) {
             return true;
         }
-
+        // 从 offset 开始能否解码出一个完整消息
         DispatchRequest dispatchRequest = this.commitLog.checkMessageAndReturnSize(mappedBufferResult.getByteBuffer(), true, false);
         return dispatchRequest.isSuccess();
     }
@@ -822,6 +841,7 @@ public class DefaultMessageStore implements MessageStore {
 
         ConsumeQueueInterface consumeQueue = findConsumeQueue(topic, queueId);
         if (consumeQueue != null) {
+            // 这里的 offset 指的是 conusmer queue 中存储的消费索引的 offset(并不是字节偏移)，类似数组的下标
             minOffset = consumeQueue.getMinOffsetInQueue();
             maxOffset = consumeQueue.getMaxOffsetInQueue();
 
@@ -842,6 +862,7 @@ public class DefaultMessageStore implements MessageStore {
                 final boolean diskFallRecorded = this.messageStoreConfig.isDiskFallRecorded();
 
                 long maxPullSize = Math.max(maxTotalMsgSize, 100);
+                // 128M
                 if (maxPullSize > MAX_PULL_MSG_SIZE) {
                     LOGGER.warn("The max pull size is too large maxPullSize={} topic={} queueId={}", maxPullSize, topic, queueId);
                     maxPullSize = MAX_PULL_MSG_SIZE;
@@ -867,12 +888,14 @@ public class DefaultMessageStore implements MessageStore {
                         }
 
                         long nextPhyFileStartOffset = Long.MIN_VALUE;
+                        // 遍历 conusmer queue 挨个获取 CqUnit
                         while (bufferConsumeQueue.hasNext()
                             && nextBeginOffset < maxOffset) {
                             CqUnit cqUnit = bufferConsumeQueue.next();
                             long offsetPy = cqUnit.getPos();
                             int sizePy = cqUnit.getSize();
-
+                            // 要访问的消息是否在内存中
+                            // 默认保存在内存中的消息 size 为机器内存总量的 40%
                             boolean isInMem = estimateInMemByCommitOffset(offsetPy, maxOffsetPy);
 
                             if ((cqUnit.getQueueOffset() - offset) * consumeQueue.getUnitSize() >= maxFilterMessageSize) {
@@ -947,10 +970,11 @@ public class DefaultMessageStore implements MessageStore {
                 }
 
                 if (diskFallRecorded) {
+                    // 当前 commitlog 最大的 offset 减去本次拉取消息的最大 offset
                     long fallBehind = maxOffsetPy - maxPhyOffsetPulling;
                     brokerStatsManager.recordDiskFallBehindSize(group, topic, queueId, fallBehind);
                 }
-
+                // 剩余未拉取的消息 size
                 long diff = maxOffsetPy - maxPhyOffsetPulling;
                 long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE
                     * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
@@ -1644,6 +1668,7 @@ public class DefaultMessageStore implements MessageStore {
     // Even if it is just inited.
     @Override
     public long getConfirmOffset() {
+        // bytes that have been stored in commit log
         return this.commitLog.getConfirmOffset();
     }
 
@@ -1736,6 +1761,7 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     private boolean estimateInMemByCommitOffset(long offsetPy, long maxOffsetPy) {
+        // 保留在内存中的消息 size 为 机器内存总量的 40%
         long memory = (long) (StoreUtil.TOTAL_PHYSICAL_MEMORY_SIZE * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
         return (maxOffsetPy - offsetPy) <= memory;
     }
@@ -1890,8 +1916,11 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     private boolean isTempFileExist() {
+        // user.home/store/abort  文件
         String fileName = StorePathConfigHelper.getAbortFile(this.messageStoreConfig.getStorePathRootDir());
         File file = new File(fileName);
+        // false 表示 broker 上次是正常 shutdown
+        // true 表示 borker 上次是异常 shutdown
         return file.exists();
     }
 
@@ -2801,7 +2830,7 @@ public class DefaultMessageStore implements MessageStore {
     }
 
     class ReputMessageService extends ServiceThread {
-
+        // 索引在 commitlog 中构建到了哪里
         protected volatile long reputFromOffset = 0;
         protected volatile long currentReputTimestamp = System.currentTimeMillis();
 
@@ -2836,6 +2865,7 @@ public class DefaultMessageStore implements MessageStore {
         }
 
         public long behind() {
+            // Get number of the bytes that have been stored in commit log and not yet dispatched to consume queue.
             return DefaultMessageStore.this.getConfirmOffset() - this.reputFromOffset;
         }
 

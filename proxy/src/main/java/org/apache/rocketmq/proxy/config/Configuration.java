@@ -39,8 +39,12 @@ public class Configuration {
     public static final String CONFIG_PATH_PROPERTY = "com.rocketmq.proxy.configPath";
 
     public void init() throws Exception {
+        // proxy 配置默认会加载 rocket home 中的 conf 目录中的 rmq-proxy.json 文件内容
+        // 如果明确指定 -pc 那么就加载指定的文件内容 (json 格式)
+        // 将文件中的所有 bytes 读取出来转换成 string
         String proxyConfigData = loadJsonConfig();
-
+        // broker 配置默认会加载 rocket home 中的 conf 目录中的 broker.conf 文件内容
+        // org.apache.rocketmq.proxy.config.ProxyConfig.brokerConfigPath
         ProxyConfig proxyConfig = JSON.parseObject(proxyConfigData, ProxyConfig.class);
         proxyConfig.initData();
         setProxyConfig(proxyConfig);
@@ -61,6 +65,7 @@ public class Configuration {
                     return CharStreams.toString(new InputStreamReader(inputStream, Charsets.UTF_8));
                 }
             }
+            // 默认会在 rocket home 中的 conf 目录去找 rmq-proxy.json
             filePath = new File(ConfigurationManager.getProxyHome() + File.separator + "conf", configFileName).toString();
         }
 

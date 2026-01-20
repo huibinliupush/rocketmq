@@ -34,7 +34,7 @@ import org.apache.rocketmq.tools.command.SubCommand;
 import org.apache.rocketmq.tools.command.SubCommandException;
 
 public class UpdateTopicSubCommand implements SubCommand {
-
+    // updateTopic -n localhost:9876 -t testCreateNormalTopic -c DefaultCluster
     @Override
     public String commandName() {
         return "updateTopic";

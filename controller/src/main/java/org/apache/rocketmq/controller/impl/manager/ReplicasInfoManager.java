@@ -201,10 +201,13 @@ public class ReplicasInfoManager {
             result.setCodeAndRemark(ResponseCode.CONTROLLER_BROKER_NEED_TO_BE_REGISTERED, "Broker hasn't been registered");
             return result;
         }
-
+        // 获取副本组的 SyncState
         final SyncStateInfo syncStateInfo = this.syncStateSetInfoTable.get(brokerName);
+        // 获取副本组的 BrokerReplica
         final BrokerReplicaInfo brokerReplicaInfo = this.replicaInfoTable.get(brokerName);
+        // 副本组的 syncStateSet
         final Set<Long> syncStateSet = syncStateInfo.getSyncStateSet();
+        // 副本组原来的 master (此时已经 no active)
         final Long oldMaster = syncStateInfo.getMasterBrokerId();
         Set<Long> allReplicaBrokers = controllerConfig.isEnableElectUncleanMaster() ? brokerReplicaInfo.getAllBroker() : null;
         Long newMaster = null;
@@ -212,13 +215,19 @@ public class ReplicasInfoManager {
         if (syncStateInfo.isFirstTimeForElect()) {
             // If never have a master in this broker set, in other words, it is the first time to elect a master
             // elect it as the first master
+            // 初次选主的逻辑是，哪个 broker 先发起选主，就选哪个 broker
             newMaster = brokerId;
         }
 
         // elect by policy
         if (newMaster == null || newMaster == -1) {
             // we should assign this assignedBrokerId when the brokerAddress need to be elected by force
+            // DesignateElect 指定选举，默认为 false , 如果选举是由 contoller 触发，这里的 brokerId = null
             Long assignedBrokerId = request.getDesignateElect() ? brokerId : null;
+            // 首先比较 broker 的 epoch , 选取最大的 epoch 为 master
+            // 如果 epoch 相同，则继续看 MaxOffset ，选取最大的 maxOffset 为 master
+            // 如果 epoch , maxOffset 都相同，则以 ElectionPriority 为准，值越小，越有机会成为 master
+            // 如果全部相同，则选第一个
             newMaster = electPolicy.elect(brokerReplicaInfo.getClusterName(), brokerReplicaInfo.getBrokerName(), syncStateSet, allReplicaBrokers, oldMaster, assignedBrokerId);
         }
 
@@ -242,20 +251,26 @@ public class ReplicasInfoManager {
             final int masterEpoch = syncStateInfo.getMasterEpoch();
             final int syncStateSetEpoch = syncStateInfo.getSyncStateSetEpoch();
             final HashSet<Long> newSyncStateSet = new HashSet<>();
+            // 将 master 加入到 SyncStateSet 中
             newSyncStateSet.add(newMaster);
 
             response.setMasterBrokerId(newMaster);
             response.setMasterAddress(brokerReplicaInfo.getBrokerAddress(newMaster));
+            // 新选举出来的 master epoch + 1
             response.setMasterEpoch(masterEpoch + 1);
             response.setSyncStateSetEpoch(syncStateSetEpoch + 1);
+            // 当前副本集 SyncStateSet，第一次选举之后，只有 master 一个（每次选举完毕之后，都是只有一个 master）
             ElectMasterResponseBody responseBody = new ElectMasterResponseBody(newSyncStateSet);
-
+            // 当前副本集中的成员
             BrokerMemberGroup brokerMemberGroup = buildBrokerMemberGroup(brokerReplicaInfo);
             if (null != brokerMemberGroup) {
                 responseBody.setBrokerMemberGroup(brokerMemberGroup);
             }
 
             result.setBody(responseBody.encode());
+            // 更新 controller 中的副本 master 信息，epoch + 1, SyncStateSet 重新设置为当前新的 master
+            // 逻辑同设置 responseBody
+            // org.apache.rocketmq.controller.impl.manager.ReplicasInfoManager.handleElectMaster
             final ElectMasterEvent event = new ElectMasterEvent(brokerName, newMaster);
             result.addEvent(event);
             LOGGER.info("Elect new master {} for broker {}", newMaster, brokerName);
@@ -295,8 +310,18 @@ public class ReplicasInfoManager {
         final GetNextBrokerIdResponseHeader response = result.getResponse();
         if (brokerReplicaInfo == null) {
             // means that none of brokers in this broker-set are registered
+            // 在没有任何 broker 注册到 controller 的时候 replicaInfoTable 是空的
+            // broker 获取到的 NextBrokerId 全都是 FIRST_BROKER_CONTROLLER_ID
+            // 之所以统一全部设置 FIRST_BROKER_CONTROLLER_ID ，是因为考虑到不同的 broker 副本组，每个副本组中都有各自的 master ,slave
+            // 那么分属两个不同副本组的 broker 同时向 controller 获取 id ,返回的都是 FIRST_BROKER_CONTROLLER_ID
+            // 后续会在 applyBrokerId 的时候根据注册 broker 的元数据初始化 replicaInfoTable
+
+            // 还有另一种情况就是统一副本组的 broker 同时向 controller 获取 id , 那么返回也都是 FIRST_BROKER_CONTROLLER_ID
+            // 第一个 broker 在 applyBrokerId 的时候就会初始化 replicaInfoTable
             response.setNextBrokerId(MixAll.FIRST_BROKER_CONTROLLER_ID);
         } else {
+            // 第二个 broker 在 getNextBrokerId 的时候,就会发现 replicaInfoTable 中已经有自己副本组的信息了，那么 brokerId 就会从 FIRST_BROKER_CONTROLLER_ID 开始递增
+            // 第三个也是同样的逻辑，会在第二个 brokerId 基础上递增
             response.setNextBrokerId(brokerReplicaInfo.getNextAssignBrokerId());
         }
         return result;
@@ -306,6 +331,7 @@ public class ReplicasInfoManager {
         final String clusterName = request.getClusterName();
         final String brokerName = request.getBrokerName();
         final Long brokerId = request.getAppliedBrokerId();
+        // brokerAdress:timestamp
         final String registerCheckCode = request.getRegisterCheckCode();
         final String brokerAddress = registerCheckCode.split(";")[0];
         BrokerReplicaInfo brokerReplicaInfo = this.replicaInfoTable.get(brokerName);
@@ -313,7 +339,7 @@ public class ReplicasInfoManager {
         final ApplyBrokerIdEvent event = new ApplyBrokerIdEvent(clusterName, brokerName, brokerAddress, brokerId, registerCheckCode);
         // broker-set unregistered
         if (brokerReplicaInfo == null) {
-            // first brokerId
+            // first brokerId ，在 broker 没有注册到 controller 之前，通过 getNextBrokerId 获取到的都是 FIRST_BROKER_CONTROLLER_ID
             if (brokerId == MixAll.FIRST_BROKER_CONTROLLER_ID) {
                 result.addEvent(event);
             } else {
@@ -343,12 +369,15 @@ public class ReplicasInfoManager {
             result.setCodeAndRemark(ResponseCode.CONTROLLER_BROKER_NEED_TO_BE_REGISTERED, String.format("Broker-set: %s hasn't been registered in controller", brokerName));
             return result;
         }
+        // 获取 broker 所在副本集
         final BrokerReplicaInfo brokerReplicaInfo = this.replicaInfoTable.get(brokerName);
+        // 副本集的同步信息
         final SyncStateInfo syncStateInfo = this.syncStateSetInfoTable.get(brokerName);
         if (!brokerReplicaInfo.isBrokerExist(brokerId)) {
             result.setCodeAndRemark(ResponseCode.CONTROLLER_BROKER_NEED_TO_BE_REGISTERED, String.format("BrokerId: %d hasn't been registered in broker-set: %s", brokerId, brokerName));
             return result;
         }
+        // 副本集中是否已经有 master
         if (syncStateInfo.isMasterExist() && alivePredicate.check(clusterName, brokerName, syncStateInfo.getMasterBrokerId())) {
             // if master still exist
             response.setMasterBrokerId(syncStateInfo.getMasterBrokerId());
@@ -466,13 +495,17 @@ public class ReplicasInfoManager {
     }
 
     public List<String/*BrokerName*/> scanNeedReelectBrokerSets(final BrokerValidPredicate validPredicate) {
+        // 存放需要重新选主的副本组
         List<String> needReelectBrokerSets = new LinkedList<>();
+        // 遍历所有副本组的 syncStateSetInfo
         this.syncStateSetInfoTable.forEach((brokerName, syncStateInfo) -> {
+            // 获取副本组的 master id
             Long masterBrokerId = syncStateInfo.getMasterBrokerId();
             String clusterName = syncStateInfo.getClusterName();
             // Now master is inactive
             if (masterBrokerId != null && !validPredicate.check(clusterName, brokerName, masterBrokerId)) {
                 // Still at least one broker alive
+                // 获取副本组中所有的 brokerId
                 Set<Long> brokerIds = this.replicaInfoTable.get(brokerName).getBrokerIdTable().keySet();
                 boolean alive = brokerIds.stream().anyMatch(id -> validPredicate.check(clusterName, brokerName, id));
                 if (alive) {

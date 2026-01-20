@@ -46,6 +46,7 @@ import org.apache.rocketmq.store.config.MessageStoreConfig;
 public class BrokerStartup {
 
     public static Logger log;
+    // -c 指定的配置文件
     public static final SystemConfigFileHelper CONFIG_FILE_HELPER = new SystemConfigFileHelper();
 
     public static void main(String[] args) {
@@ -98,7 +99,7 @@ public class BrokerStartup {
         if (null == commandLine) {
             System.exit(-1);
         }
-
+        // 加载指定的 brokerconfig , 由 -c 指定
         Properties properties = null;
         if (commandLine.hasOption('c')) {
             String file = commandLine.getOptionValue('c');
@@ -110,14 +111,20 @@ public class BrokerStartup {
         }
 
         if (properties != null) {
+            // 设置 namesrv.domain 相关的系统变量
             properties2SystemEnv(properties);
+            // 从 config 类中提取配置项 key : 遍历所有 set 方法，提取属性名称（首字母转为小写）
+            // 通过 key 到 properties 中查找，并通过 set 方法设置
             MixAll.properties2Object(properties, brokerConfig);
             MixAll.properties2Object(properties, nettyServerConfig);
             MixAll.properties2Object(properties, nettyClientConfig);
             MixAll.properties2Object(properties, messageStoreConfig);
             MixAll.properties2Object(properties, authConfig);
         }
-
+        // 用 commandLine 中指定的配置项重新覆盖 brokerConfig
+        // 提取 commandLine 中的 key value 设置到 properties 中，近而设置到 brokerConfig 中
+        // 我们通过 -key 空格 value 的形式指定
+        // -c /Users/liuhuibin/workspace/opensource/rocketmq/conf/broker.conf
         MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), brokerConfig);
         if (null == brokerConfig.getRocketmqHome()) {
             System.out.printf("Please set the %s variable in your environment " +
@@ -146,6 +153,7 @@ public class BrokerStartup {
         }
 
         // Set broker role according to ha config
+        // 如果没有开启 controller , 则 broker 的 role , id 手动设置
         if (!brokerConfig.isEnableControllerMode()) {
             switch (messageStoreConfig.getBrokerRole()) {
                 case ASYNC_MASTER:
@@ -185,7 +193,7 @@ public class BrokerStartup {
         if (brokerConfig.isIsolateLogEnable() && messageStoreConfig.isEnableDLegerCommitLog()) {
             System.setProperty("brokerLogDir", brokerConfig.getBrokerName() + "_" + messageStoreConfig.getdLegerSelfId());
         }
-
+        // 打印所有配置项
         if (commandLine.hasOption('p')) {
             Logger console = LoggerFactory.getLogger(LoggerName.BROKER_CONSOLE_NAME);
             MixAll.printObjectProperties(console, brokerConfig);
@@ -193,7 +201,7 @@ public class BrokerStartup {
             MixAll.printObjectProperties(console, nettyClientConfig);
             MixAll.printObjectProperties(console, messageStoreConfig);
             System.exit(0);
-        } else if (commandLine.hasOption('m')) {
+        } else if (commandLine.hasOption('m')) { // 只打印重要的配置项
             Logger console = LoggerFactory.getLogger(LoggerName.BROKER_CONSOLE_NAME);
             MixAll.printObjectProperties(console, brokerConfig, true);
             MixAll.printObjectProperties(console, nettyServerConfig, true);

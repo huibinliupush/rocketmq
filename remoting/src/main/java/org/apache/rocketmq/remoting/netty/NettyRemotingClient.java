@@ -101,6 +101,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
 
     protected final NettyClientConfig nettyClientConfig;
     private final Bootstrap bootstrap = new Bootstrap();
+    // 1 线程
     private final EventLoopGroup eventLoopGroupWorker;
     private final Lock lockChannelTables = new ReentrantLock();
     private final Map<String /* cidr */, SocksProxyConfig /* proxy */> proxyMap = new HashMap<>();
@@ -115,7 +116,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
     private final AtomicReference<String> namesrvAddrChoosed = new AtomicReference<>();
     private final AtomicInteger namesrvIndex = new AtomicInteger(initValueIndex());
     private final Lock namesrvChannelLock = new ReentrantLock();
-
+    // availableProcessors 个线程的 FixedThreadPool
     private final ExecutorService publicExecutor;
     private final ExecutorService scanExecutor;
 
@@ -124,7 +125,8 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
      */
     private ExecutorService callbackExecutor;
     private final ChannelEventListener channelEventListener;
-    private EventExecutorGroup defaultEventExecutorGroup;
+    // nameserver中为 null ， 后续启动 client 的时候会被设置成 4 线程
+    private EventExecutorGroup defaultEventExecutorGroup; // 非 netty 的 IO 线程，主要用来处理 rocketmq 的业务逻辑
 
     public NettyRemotingClient(final NettyClientConfig nettyClientConfig) {
         this(nettyClientConfig, null);
@@ -139,12 +141,14 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         final ChannelEventListener channelEventListener,
         final EventLoopGroup eventLoopGroup,
         final EventExecutorGroup eventExecutorGroup) {
+        // 65535 , 65535
         super(nettyClientConfig.getClientOnewaySemaphoreValue(), nettyClientConfig.getClientAsyncSemaphoreValue());
         this.nettyClientConfig = nettyClientConfig;
+        // client 这里为 null
         this.channelEventListener = channelEventListener;
 
         this.loadSocksProxyJson();
-
+        // availableProcessors
         int publicThreadNums = nettyClientConfig.getClientCallbackExecutorThreads();
         if (publicThreadNums <= 0) {
             publicThreadNums = 4;
@@ -160,6 +164,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         } else {
             this.eventLoopGroupWorker = new NioEventLoopGroup(1, new ThreadFactoryImpl("NettyClientSelector_"));
         }
+        // null
         this.defaultEventExecutorGroup = eventExecutorGroup;
 
         if (nettyClientConfig.isUseTLS()) {
@@ -191,7 +196,9 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
 
     @Override
     public void start() {
+        // nameserver中为 null
         if (this.defaultEventExecutorGroup == null) {
+            // 4 线程
             this.defaultEventExecutorGroup = new DefaultEventExecutorGroup(
                 nettyClientConfig.getClientWorkerThreads(),
                 new ThreadFactoryImpl("NettyClientWorkerThread_"));
@@ -199,7 +206,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         Bootstrap handler = this.bootstrap.group(this.eventLoopGroupWorker).channel(NioSocketChannel.class)
             .option(ChannelOption.TCP_NODELAY, true)
             .option(ChannelOption.SO_KEEPALIVE, false)
-            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, nettyClientConfig.getConnectTimeoutMillis())
+            .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, nettyClientConfig.getConnectTimeoutMillis()) // 3s
             .handler(new ChannelInitializer<SocketChannel>() {
                 @Override
                 public void initChannel(SocketChannel ch) throws Exception {
@@ -240,7 +247,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
         }
 
         nettyEventExecutor.start();
-
+        // 每隔 1s 扫描 ResponseTable ， 超时则回调业务的 callback
         TimerTask timerTaskScanResponseTable = new TimerTask() {
             @Override
             public void run(Timeout timeout) {
@@ -254,7 +261,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
             }
         };
         this.timer.newTimeout(timerTaskScanResponseTable, 1000 * 3, TimeUnit.MILLISECONDS);
-
+        // 每隔 3s 扫描 availableNameSrv ， 如果无法连接 name server , 则剔除
         if (nettyClientConfig.isScanAvailableNameSrv()) {
             int connectTimeoutMillis = this.nettyClientConfig.getConnectTimeoutMillis();
             TimerTask timerTaskScanAvailableNameSrv = new TimerTask() {
@@ -738,7 +745,16 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
             invokeCallback.operationFail(new RemotingConnectException(addr));
             return;
         }
+        // 这里的 channelFuture 表示 connect addr 的 future , 在初次 connect 的时候会返回 channelFuture
+        // 当 connect 成功之后就会调用 channelFuture 的相关 listener（初次建立连接）
+        // 如果当前 channelFuture 已经完成(connect 成功，不是初次建立连接，已经建立好了)，那么调用 addListener 之后就会立即执行 listener
+        // see : io.netty.util.concurrent.DefaultPromise.addListener
+
+        // listener 的通知是一次性的，通知完就删除了（netty 置为 null）,下一次调用 channelFuture.addListener 的时候通知的是新添加的 listener
+        // 老的 listener 不会再次通知（通知之后就删除了）
+        // see : io.netty.util.concurrent.DefaultPromise.notifyListenersNow
         channelFuture.addListener(future -> {
+            // listener 用于监听 channelFuture 的结果，所以参数 future 就是 channelFuture
             if (future.isSuccess()) {
                 Channel channel = channelFuture.channel();
                 String channelRemoteAddr = RemotingHelper.parseChannelRemoteAddr(channel);

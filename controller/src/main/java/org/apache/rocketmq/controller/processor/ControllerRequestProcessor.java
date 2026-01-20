@@ -176,6 +176,7 @@ public class ControllerRequestProcessor implements NettyRequestProcessor {
 
     private RemotingCommand handleControllerElectMaster(ChannelHandlerContext ctx,
         RemotingCommand request) throws Exception {
+        // 包含需要选主的副本组 broker name
         final ElectMasterRequestHeader electMasterRequest = (ElectMasterRequestHeader) request.decodeCommandCustomHeader(ElectMasterRequestHeader.class);
         final CompletableFuture<RemotingCommand> future = this.controllerManager.getController().electMaster(electMasterRequest);
         if (future != null) {

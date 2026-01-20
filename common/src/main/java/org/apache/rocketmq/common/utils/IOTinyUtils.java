@@ -147,6 +147,11 @@ public class IOTinyUtils {
     public static void writeStringToFile(File file, String data, String encoding) throws IOException {
         OutputStream os = null;
         try {
+            /**
+             * 1. 如果使用构造方法 `FileOutputStream(File file)` 或 `FileOutputStream(String name)`，那么每次写入都会从文件的开头开始。如果文件已经存在，那么文件原有内容会被覆盖。
+             * 2. 如果使用构造方法 `FileOutputStream(File file, boolean append)` 或 `FileOutputStream(String name, boolean append)`，并且将 `append` 参数设置为 `true`，那么写入会从文件的末尾开始（即追加写入）。
+             * 因此，如果没有指定追加模式，则从文件开头开始写入，并覆盖原有内容；如果指定了追加模式，则从文件末尾开始写入，保留原有内容。
+             * */
             os = new FileOutputStream(file);
             os.write(data.getBytes(encoding));
         } finally {

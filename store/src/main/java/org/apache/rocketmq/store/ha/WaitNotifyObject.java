@@ -30,7 +30,8 @@ public class WaitNotifyObject {
 
     protected final ConcurrentHashMap<Long/* thread id */, AtomicBoolean/* notified */> waitingThreadTable =
         new ConcurrentHashMap<>(16);
-
+    // notify 的时候设置为 true
+    // wait 的时候设置为 false
     protected AtomicBoolean hasNotified = new AtomicBoolean(false);
 
     public void wakeup() {
@@ -58,16 +59,18 @@ public class WaitNotifyObject {
                 log.error("Interrupted", e);
             } finally {
                 this.hasNotified.set(false);
+                // 最被唤醒之后调用，顾名思义， wait 结尾（唤醒的时候）回调
                 this.onWaitEnd();
             }
         }
     }
-
+    // 最被唤醒之后调用，顾名思义， wait 结尾（唤醒的时候）回调
     protected void onWaitEnd() {
     }
 
     public void wakeupAll() {
         boolean needNotify = false;
+        // 将所有线程的 notified 状态改为 true
         for (Map.Entry<Long, AtomicBoolean> entry : this.waitingThreadTable.entrySet()) {
             if (entry.getValue().compareAndSet(false, true)) {
                 needNotify = true;

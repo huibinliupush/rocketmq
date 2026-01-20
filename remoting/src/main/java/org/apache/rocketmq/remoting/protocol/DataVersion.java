@@ -19,6 +19,7 @@ package org.apache.rocketmq.remoting.protocol;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class DataVersion extends RemotingSerializable {
+    // newMasterEpoch
     private long stateVersion = 0L;
     private long timestamp = System.currentTimeMillis();
     private AtomicLong counter = new AtomicLong(0);

@@ -20,7 +20,7 @@ package org.apache.rocketmq.store.ha.autoswitch;
 import org.apache.commons.lang3.StringUtils;
 
 public class TempBrokerMetadata extends BrokerMetadata {
-
+    // $ipAddress;$timestamp
     private String registerCheckCode;
 
     public TempBrokerMetadata(String filePath) {
@@ -38,7 +38,9 @@ public class TempBrokerMetadata extends BrokerMetadata {
     public void updateAndPersist(String clusterName, String brokerName, Long brokerId, String registerCheckCode) throws Exception {
         super.clusterName = clusterName;
         super.brokerName = brokerName;
+        // 从 controller 获取
         super.brokerId = brokerId;
+        // $ipAddress;$timestamp
         this.registerCheckCode = registerCheckCode;
         writeToFile();
     }

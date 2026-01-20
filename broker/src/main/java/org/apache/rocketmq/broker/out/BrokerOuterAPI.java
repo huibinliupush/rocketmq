@@ -1280,6 +1280,7 @@ public class BrokerOuterAPI {
     public GetNextBrokerIdResponseHeader getNextBrokerId(final String clusterName, final String brokerName,
         final String controllerAddress) throws Exception {
         final GetNextBrokerIdRequestHeader requestHeader = new GetNextBrokerIdRequestHeader(clusterName, brokerName);
+        // see : org.apache.rocketmq.controller.processor.ControllerRequestProcessor.handleRequest
         final RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.CONTROLLER_GET_NEXT_BROKER_ID, requestHeader);
         final RemotingCommand response = this.remotingClient.invokeSync(controllerAddress, request, 3000);
         assert response != null;

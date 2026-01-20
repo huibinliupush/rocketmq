@@ -71,6 +71,7 @@ public class RocketMQSerializable {
         // String remark
         String remark = cmd.getRemark();
         if (remark != null && !remark.isEmpty()) {
+            // str 长度(4字节) + str bytes
             writeStr(out, false, remark);
         } else {
             out.writeInt(0);

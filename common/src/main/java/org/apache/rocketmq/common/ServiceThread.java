@@ -30,6 +30,7 @@ public abstract class ServiceThread implements Runnable {
 
     protected Thread thread;
     protected final CountDownLatch2 waitPoint = new CountDownLatch2(1);
+    // wakeup 设置为 true , wait 设置 false 并回调 onWaitEnd
     protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false);
     protected volatile boolean stopped = false;
     protected boolean isDaemon = false;

@@ -25,7 +25,7 @@ import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 
 public class ServerUtil {
-
+    // 所有的命令都会有这两个选项
     public static Options buildCommandlineOptions(final Options options) {
         Option opt = new Option("h", "help", false, "Print help");
         opt.setRequired(false);
@@ -72,6 +72,8 @@ public class ServerUtil {
 
         if (opts != null) {
             for (Option opt : opts) {
+                // name 在 commandLine 中的形式是： -name 空格 value
+                // -c /Users/liuhuibin/workspace/opensource/rocketmq/conf/broker.conf
                 String name = opt.getLongOpt();
                 String value = commandLine.getOptionValue(name);
                 if (value != null) {

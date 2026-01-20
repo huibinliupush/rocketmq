@@ -20,6 +20,7 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import org.apache.rocketmq.common.resource.ResourceType;
 
+// see : org.apache.rocketmq.remoting.protocol.RequestHeaderRegistry.requestHeaderMap
 @Retention(RetentionPolicy.RUNTIME)
 public @interface RocketMQAction {
 

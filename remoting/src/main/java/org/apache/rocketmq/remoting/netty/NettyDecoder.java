@@ -28,7 +28,7 @@ import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
 public class NettyDecoder extends LengthFieldBasedFrameDecoder {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.ROCKETMQ_REMOTING_NAME);
-
+    // 16M
     private static final int FRAME_MAX_LENGTH =
         Integer.parseInt(System.getProperty("com.rocketmq.remoting.frameMaxLength", "16777216"));
 
@@ -41,10 +41,12 @@ public class NettyDecoder extends LengthFieldBasedFrameDecoder {
         ByteBuf frame = null;
         Stopwatch timer = Stopwatch.createStarted();
         try {
+            // 按照 length 相关的参数从 in 中提取完整的 message
             frame = (ByteBuf) super.decode(ctx, in);
             if (null == frame) {
                 return null;
             }
+            // frame 现在是一个完整的 message,但其还是字节，需要近一步 decode 成 RemotingCommand
             RemotingCommand cmd = RemotingCommand.decode(frame);
             cmd.setProcessTimer(timer);
             return cmd;

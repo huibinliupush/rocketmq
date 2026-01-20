@@ -20,6 +20,7 @@ import org.apache.rocketmq.remoting.CommandCustomHeader;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 
 public class AlterSyncStateSetResponseHeader implements CommandCustomHeader {
+    // 每当 controller 的 SyncStateSet 改变一次， epoch + 1
     private int newSyncStateSetEpoch;
 
     public AlterSyncStateSetResponseHeader() {

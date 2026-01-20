@@ -68,8 +68,11 @@ public class ControllerManager {
     private final Configuration configuration;
     private final RemotingClient remotingClient;
     private Controller controller;
+    // RaftBrokerHeartBeatManager
     private final BrokerHeartbeatManager heartbeatManager;
+    // 16 线程
     private ExecutorService controllerRequestExecutor;
+    // 50000
     private BlockingQueue<Runnable> controllerRequestThreadPoolQueue;
     private final NotifyService notifyService;
     private ControllerMetricsManager controllerMetricsManager;
@@ -79,16 +82,20 @@ public class ControllerManager {
         this.controllerConfig = controllerConfig;
         this.nettyServerConfig = nettyServerConfig;
         this.nettyClientConfig = nettyClientConfig;
+        // netty event 的 listener
         this.brokerHousekeepingService = new BrokerHousekeepingService(this);
         this.configuration = new Configuration(log, this.controllerConfig, this.nettyServerConfig);
         this.configuration.setStorePathFromConfig(this.controllerConfig, "configStorePath");
         this.remotingClient = new NettyRemotingClient(nettyClientConfig);
+        // RaftBrokerHeartBeatManager
         this.heartbeatManager = BrokerHeartbeatManager.newBrokerHeartbeatManager(controllerConfig);
         this.notifyService = new NotifyService();
     }
 
     public boolean initialize() {
+        // 50000
         this.controllerRequestThreadPoolQueue = new LinkedBlockingQueue<>(this.controllerConfig.getControllerRequestThreadPoolQueueCapacity());
+        // 16 线程
         this.controllerRequestExecutor = ThreadUtils.newThreadPoolExecutor(
             this.controllerConfig.getControllerThreadPoolNums(),
             this.controllerConfig.getControllerThreadPoolNums(),
@@ -147,6 +154,9 @@ public class ControllerManager {
         log.info("Controller Manager received broker inactive event, clusterName: {}, brokerName: {}, brokerId: {}",
             clusterName, brokerName, brokerId);
         if (controller.isLeaderState()) {
+            // brokerId == null 说明该 brokerName 副本集需要重新选组
+            // 产生的逻辑是，如果 brokerName 副本集中的 master no active，但是副本集中至少有一个 slave active
+            // org.apache.rocketmq.controller.impl.JRaftController.checkNotActiveBroker
             if (brokerId == null) {
                 // Means that force triggering election for this broker-set
                 triggerElectMaster(brokerName);
@@ -164,7 +174,7 @@ public class ControllerManager {
                     log.warn("The broker with brokerId: {} in broker-set: {} has been inactive", brokerId, brokerName);
                     return;
                 }
-                // Trigger election
+                // master offline Trigger election
                 triggerElectMaster(brokerName);
             });
         } else {
@@ -182,6 +192,7 @@ public class ControllerManager {
             if (electMasterResponse.getCode() == ResponseCode.SUCCESS) {
                 log.info("Elect a new master in broker-set: {} done, result: {}", brokerName, electMasterResponse);
                 if (controllerConfig.isNotifyBrokerRoleChanged()) {
+                    // 挨个通知副本组的所有 broker , master 已经改变（RoleChangeNotifyEntry）
                     notifyBrokerRoleChanged(RoleChangeNotifyEntry.convert(electMasterResponse));
                 }
                 return true;
@@ -220,6 +231,7 @@ public class ControllerManager {
             }
             // Inform all active brokers
             final Map<Long, String> brokerAddrs = memberGroup.getBrokerAddrs();
+            // 挨个通知副本组的所有 broker , master 已经改变（RoleChangeNotifyEntry）
             brokerAddrs.entrySet().stream().filter(x -> this.heartbeatManager.isBrokerActive(clusterName, brokerName, x.getKey()))
                 .forEach(x -> this.notifyService.notifyBroker(x.getValue(), entry));
         }
@@ -266,6 +278,8 @@ public class ControllerManager {
 
     public void start() {
         this.controller.startup();
+        // 每隔 5s scanNotActiveBroker
+        // name server 和 contoller 都会开启同样的扫描操作
         this.heartbeatManager.start();
         this.remotingClient.start();
     }

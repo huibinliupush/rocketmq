@@ -85,6 +85,7 @@ public class DefaultMappedFile extends AbstractMappedFile {
     protected ByteBuffer writeBuffer = null;
     protected TransientStorePool transientStorePool = null;
     protected String fileName;
+    // consumer queue 中保存的最小 offset (global offset)，单位字节 ,也就是文件名
     protected long fileFromOffset;
     protected File file;
     protected MappedByteBuffer mappedByteBuffer;
@@ -525,6 +526,7 @@ public class DefaultMappedFile extends AbstractMappedFile {
 
     @Override
     public SelectMappedBufferResult selectMappedBuffer(int pos) {
+        // 可以读取到的最大位置
         int readPosition = getReadPosition();
         if (pos < readPosition && pos >= 0) {
             if (this.hold()) {

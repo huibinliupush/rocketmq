@@ -127,7 +127,7 @@ public class MQAdminStartup {
     public static void main(String[] args) {
         main0(args, null);
     }
-
+    // updatetopic -n localhost:9876 -t yourNormalTopic -c DefaultCluster
     public static void main0(String[] args, RPCHook rpcHook) {
         System.setProperty(RemotingCommand.REMOTING_VERSION_KEY, Integer.toString(MQVersion.CURRENT_VERSION));
 
@@ -144,6 +144,7 @@ public class MQAdminStartup {
                     if (args[0].equals("help")) {
                         SubCommand cmd = findSubCommand(args[1]);
                         if (cmd != null) {
+                            // 构建公共 option : -n -h
                             Options options = ServerUtil.buildCommandlineOptions(new Options());
                             options = cmd.buildCommandlineOptions(options);
                             if (options != null) {
@@ -159,7 +160,7 @@ public class MQAdminStartup {
                     SubCommand cmd = findSubCommand(args[0]);
                     if (cmd != null) {
                         String[] subargs = parseSubArgs(args);
-
+                        // 构建公共 option : -n -h
                         Options options = ServerUtil.buildCommandlineOptions(new Options());
                         final CommandLine commandLine =
                             ServerUtil.parseCmdLine("mqadmin " + cmd.commandName(), subargs, cmd.buildCommandlineOptions(options),
@@ -173,6 +174,7 @@ public class MQAdminStartup {
                             System.setProperty(MixAll.NAMESRV_ADDR_PROPERTY, namesrvAddr);
                         }
                         if (rpcHook != null) {
+                            // 由 broker 端的 AdminBrokerProcessor 处理相关的命令
                             cmd.execute(commandLine, options, rpcHook);
                         } else {
                             cmd.execute(commandLine, options, AclUtils.getAclRPCHook(ROCKETMQ_HOME + MixAll.ACL_CONF_TOOLS_FILE));

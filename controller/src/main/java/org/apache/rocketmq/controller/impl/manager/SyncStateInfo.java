@@ -29,6 +29,9 @@ public class SyncStateInfo implements Serializable {
     private final String clusterName;
     private final String brokerName;
     private final AtomicInteger masterEpoch;
+    // 每次均已 master 上报过来的 syncStateSet 为准
+    // 每当 controller 中的 syncStateSet 改变一次，对应的 epoch + 1
+    // org.apache.rocketmq.controller.impl.manager.SyncStateInfo.updateSyncStateSetInfo
     private final AtomicInteger syncStateSetEpoch;
 
     private Set<Long/*brokerId*/> syncStateSet;

@@ -24,9 +24,11 @@ public class BrokerLiveInfo implements Serializable {
     private final String brokerName;
 
     private String brokerAddr;
+    // broker 超过该时间没有向 controller 发送心跳(10s)，则视为 no active
     private long heartbeatTimeoutMillis;
     private Channel channel;
     private long brokerId;
+    // broker 每次向 controller 发送心跳都会更新这里
     private long lastUpdateTimestamp;
     private int epoch;
     private long maxOffset;

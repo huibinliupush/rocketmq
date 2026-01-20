@@ -65,6 +65,7 @@ public class TopicConfigManager extends ConfigManager {
     private static final int SCHEDULE_TOPIC_QUEUE_NUM = 18;
 
     private transient final Lock topicConfigTableLock = new ReentrantLock();
+    // 加载自 System.getProperty("user.home") + File.separator + "store" /config/topics.json
     protected ConcurrentMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<>(1024);
     protected DataVersion dataVersion = new DataVersion();
     protected transient BrokerController brokerController;

@@ -266,8 +266,10 @@ public class BrokerController {
     protected ExecutorService consumerManageExecutor;
     protected ExecutorService loadBalanceExecutor;
     protected ExecutorService endTransactionExecutor;
+    // EnableControllerMode -> true
     protected boolean updateMasterHAServerAddrPeriodically = false;
     private BrokerStats brokerStats;
+    // BrokerIP1 : listenPort
     private InetSocketAddress storeHost;
     private TimerMessageStore timerMessageStore;
     private TimerCheckpoint timerCheckpoint;
@@ -287,6 +289,8 @@ public class BrokerController {
     protected List<BrokerAttachedPlugin> brokerAttachedPlugins = new ArrayList<>();
     protected volatile long shouldStartTime;
     private BrokerPreOnlineService brokerPreOnlineService;
+    // Skip register for broker is isolated
+    // 不向 nameserver , controller 注册以及发送心跳
     protected volatile boolean isIsolated = false;
     protected volatile long minBrokerIdInGroup = 0;
     protected volatile String minBrokerAddrInGroup = null;
@@ -392,6 +396,7 @@ public class BrokerController {
 
         this.queryAssignmentProcessor = new QueryAssignmentProcessor(this);
         this.clientManageProcessor = new ClientManageProcessor(this);
+        // broker 作为 slave 的时候，向 master 同步日志
         this.slaveSynchronize = new SlaveSynchronize(this);
         this.endTransactionProcessor = new EndTransactionProcessor(this);
 
@@ -416,6 +421,9 @@ public class BrokerController {
         if (brokerConfig.getBrokerConfigPath() != null && !brokerConfig.getBrokerConfigPath().isEmpty()) {
             brokerConfigPath = brokerConfig.getBrokerConfigPath();
         } else {
+            // 默认 broker config 路径
+            // System.getProperty("user.home") + File.separator + "store"
+            //        + File.separator + "config" + File.separator + "broker.properties"
             brokerConfigPath = BrokerPathConfigHelper.getBrokerConfigPath();
         }
         this.configuration = new Configuration(
@@ -626,12 +634,14 @@ public class BrokerController {
     }
 
     protected void initializeBrokerScheduledTasks() {
+        // 计算并返回下一个凌晨（即第二天00:00:00.000）的时间戳（毫秒数）
         final long initialDelay = UtilAll.computeNextMorningTimeMillis() - System.currentTimeMillis();
         final long period = TimeUnit.DAYS.toMillis(1);
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
             @Override
             public void run() {
                 try {
+                    // 每天的凌晨执行
                     BrokerController.this.getBrokerStats().record();
                 } catch (Throwable e) {
                     LOG.error("BrokerController: failed to record broker stats", e);
@@ -643,6 +653,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    // 每隔 5s 执行
                     BrokerController.this.consumerOffsetManager.persist();
                 } catch (Throwable e) {
                     LOG.error(
@@ -655,6 +666,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    // 每隔 10s 执行
                     BrokerController.this.consumerFilterManager.persist();
                     BrokerController.this.consumerOrderInfoManager.persist();
                 } catch (Throwable e) {
@@ -669,6 +681,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    // 每 3 分钟执行
                     BrokerController.this.protectBroker();
                 } catch (Throwable e) {
                     LOG.error("BrokerController: failed to protectBroker", e);
@@ -680,6 +693,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    // 每一秒执行
                     BrokerController.this.printWaterMark();
                 } catch (Throwable e) {
                     LOG.error("BrokerController: failed to print broker watermark", e);
@@ -727,6 +741,7 @@ public class BrokerController {
                     public void run() {
                         try {
                             if (System.currentTimeMillis() - lastSyncTimeMs > 60 * 1000) {
+                                // 每隔 60s
                                 BrokerController.this.getSlaveSynchronize().syncAll();
                                 lastSyncTimeMs = System.currentTimeMillis();
                             }
@@ -773,6 +788,7 @@ public class BrokerController {
                 @Override
                 public void run() {
                     try {
+                        // 每隔 120s
                         BrokerController.this.updateNamesrvAddr();
                     } catch (Throwable e) {
                         LOG.error("Failed to update nameServer address list", e);
@@ -807,11 +823,17 @@ public class BrokerController {
         if (null != configStorage) {
             result = configStorage.start();
         }
+        // System.getProperty("user.home") + File.separator + "store" /config/topics.json
         result = result && this.topicConfigManager.load();
+        // topicQueueMapping.json
         result = result && this.topicQueueMappingManager.load();
+        // consumerOffset.json
         result = result && this.consumerOffsetManager.load();
+        // subscriptionGroup.json
         result = result && this.subscriptionGroupManager.load();
+        // consumerFilter.json
         result = result && this.consumerFilterManager.load();
+        // consumerOrderInfo.json
         result = result && this.consumerOrderInfoManager.load();
         return result;
     }
@@ -841,9 +863,11 @@ public class BrokerController {
             // Load store plugin
             MessageStorePluginContext context = new MessageStorePluginContext(
                 messageStoreConfig, brokerStatsManager, messageArrivingListener, brokerConfig, configuration);
+            // 构建 AbstractPluginMessageStore 责任链，最后一个为 DefaultMessageStore
             this.messageStore = MessageStoreFactory.build(context, defaultMessageStore);
             this.messageStore.getDispatcherList().addFirst(new CommitLogDispatcherCalcBitMap(this.brokerConfig, this.consumerFilterManager));
             if (messageStoreConfig.isTimerWheelEnable()) {
+                // user.home/store/config/timercheck
                 this.timerCheckpoint = new TimerCheckpoint(BrokerPathConfigHelper.getTimerCheckPath(messageStoreConfig.getStorePathRootDir()));
                 TimerMetrics timerMetrics = new TimerMetrics(BrokerPathConfigHelper.getTimerMetricsPath(messageStoreConfig.getStorePathRootDir()));
                 this.timerMessageStore = new TimerMessageStore(messageStore, messageStoreConfig, timerCheckpoint, timerMetrics, brokerStatsManager);
@@ -858,7 +882,7 @@ public class BrokerController {
     }
 
     public boolean initialize() throws CloneNotSupportedException {
-
+        // 加载 user.honme/store/config 下相关的 json 配置
         boolean result = this.initializeMetadata();
         if (!result) {
             return false;
@@ -871,7 +895,7 @@ public class BrokerController {
 
         return this.recoverAndInitService();
     }
-
+    // recover 指的是从 store path 下的日志文件中恢复磁盘中的消息数据
     public boolean recoverAndInitService() throws CloneNotSupportedException {
 
         boolean result = true;
@@ -883,6 +907,7 @@ public class BrokerController {
 
         if (messageStore != null) {
             registerMessageStoreHook();
+            // 加载 storepath 下的 commitlog , consumequeue , index 等文件
             result = this.messageStore.load();
         }
 
@@ -891,6 +916,7 @@ public class BrokerController {
         }
 
         //scheduleMessageService load after messageStore load success
+        // 加载自 storePath/config/delayOffset.json 文件
         result = result && this.scheduleMessageService.load();
 
         for (BrokerAttachedPlugin brokerAttachedPlugin : brokerAttachedPlugins) {
@@ -900,15 +926,15 @@ public class BrokerController {
         }
 
         this.brokerMetricsManager = new BrokerMetricsManager(this);
-
+        // 这里 recover 结束开启 initialize
         if (result) {
 
             initializeRemotingServer();
-
+            // 初始化各种线程池资源
             initializeResources();
-
+            // 向 server 中注册 requestCode 对应的 <processor, executor>
             registerProcessor();
-
+            // 初始化 broker 的各种定时任务（主从同步，更新 nameserver 地址，消费信息的持久化等）
             initializeScheduledTasks();
 
             initialTransaction();
@@ -1191,7 +1217,7 @@ public class BrokerController {
         fastRemotingServer.registerProcessor(RequestCode.END_TRANSACTION, endTransactionProcessor, this.endTransactionExecutor);
 
         /*
-         * Default
+         * Default (执行 admin 相关的命令，如，创建 topic , 创建消费者 group)
          */
         AdminBrokerProcessor adminProcessor = new AdminBrokerProcessor(this);
         remotingServer.registerDefaultProcessor(adminProcessor, this.adminBrokerExecutor);
@@ -1200,6 +1226,8 @@ public class BrokerController {
         /*
          * Initialize the mapping of request codes to request headers.
          */
+        // 扫描 PACKAGE_NAME 下的所有 CommandCustomHeader 类，根据 RocketMQAction 注解标注的 requestCode(action.value())
+        // 映射对应的 CommandCustomHeader
         RequestHeaderRegistry.getInstance().initialize();
     }
 
@@ -1654,6 +1682,7 @@ public class BrokerController {
     protected void startBasicService() throws Exception {
 
         if (this.messageStore != null) {
+            // 初始化 haService , 并 start
             this.messageStore.start();
         }
 
@@ -1662,6 +1691,7 @@ public class BrokerController {
         }
 
         if (this.replicasManager != null) {
+            // HA 的所有核心逻辑都在这里
             this.replicasManager.start();
         }
 
@@ -1767,13 +1797,14 @@ public class BrokerController {
         this.shouldStartTime = System.currentTimeMillis() + messageStoreConfig.getDisappearTimeAfterStart();
 
         if (messageStoreConfig.getTotalReplicas() > 1 && this.brokerConfig.isEnableSlaveActingMaster()) {
+            // Skip register for broker is isolated
             isIsolated = true;
         }
 
         if (this.brokerOuterAPI != null) {
             this.brokerOuterAPI.start();
         }
-
+        // ha 逻辑的开启，以及各种重要的服务都在这里启动
         startBasicService();
 
         if (!isIsolated && !this.messageStoreConfig.isEnableDLegerCommitLog() && !this.messageStoreConfig.isDuplicationEnable()) {
@@ -1816,6 +1847,7 @@ public class BrokerController {
         }
 
         if (this.brokerConfig.isEnableControllerMode()) {
+            // 每 1s 向所有 controller 发送心跳
             scheduleSendHeartbeat();
         }
 
@@ -1843,6 +1875,7 @@ public class BrokerController {
                     return;
                 }
                 try {
+                    // 向所有 controller 发送心跳
                     BrokerController.this.sendHeartbeat();
                 } catch (Exception e) {
                     BrokerController.LOG.error("sendHeartbeat Exception", e);
@@ -2211,9 +2244,9 @@ public class BrokerController {
                 brokerAttachedPlugin.statusChanged(shouldStart);
             }
         }
-
+        // 定时消息
         changeScheduleServiceStatus(shouldStart);
-
+        // 事务消息
         changeTransactionCheckServiceStatus(shouldStart);
 
         if (this.ackMessageProcessor != null) {

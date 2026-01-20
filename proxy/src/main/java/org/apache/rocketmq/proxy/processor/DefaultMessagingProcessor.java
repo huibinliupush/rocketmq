@@ -77,7 +77,7 @@ public class DefaultMessagingProcessor extends AbstractStartAndShutdown implemen
     protected static final String ROCKETMQ_HOME = System.getProperty(MixAll.ROCKETMQ_HOME_PROPERTY,
         System.getenv(MixAll.ROCKETMQ_HOME_ENV));
 
-    protected DefaultMessagingProcessor(ServiceManager serviceManager) {
+    protected DefaultMessagingProcessor(ServiceManager serviceManager) { // LocalServiceManager
         ProxyConfig proxyConfig = ConfigurationManager.getProxyConfig();
         this.producerProcessorExecutor = ThreadPoolMonitor.createAndMonitor(
             proxyConfig.getProducerProcessorThreadPoolNums(),
@@ -151,6 +151,7 @@ public class DefaultMessagingProcessor extends AbstractStartAndShutdown implemen
     @Override
     public ProxyTopicRouteData getTopicRouteDataForProxy(ProxyContext ctx, List<Address> requestHostAndPortList,
         String topicName) throws Exception {
+        // ClusterTopicRouteService
         return this.serviceManager.getTopicRouteService().getTopicRouteForProxy(ctx, requestHostAndPortList, topicName);
     }
 

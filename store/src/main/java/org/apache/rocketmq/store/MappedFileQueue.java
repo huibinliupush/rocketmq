@@ -40,7 +40,7 @@ import org.apache.rocketmq.store.logfile.MappedFile;
 public class MappedFileQueue implements Swappable {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static final Logger LOG_ERROR = LoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
-
+    // user.home/stpre/commitlog
     protected final String storePath;
 
     protected final int mappedFileSize;
@@ -56,6 +56,7 @@ public class MappedFileQueue implements Swappable {
 
     public MappedFileQueue(final String storePath, int mappedFileSize,
         AllocateMappedFileService allocateMappedFileService) {
+        // user.home/stpre/commitlog
         this.storePath = storePath;
         this.mappedFileSize = mappedFileSize;
         this.allocateMappedFileService = allocateMappedFileService;
@@ -196,17 +197,23 @@ public class MappedFileQueue implements Swappable {
         for (MappedFile file : this.mappedFiles) {
             long fileTailOffset = file.getFileFromOffset() + this.mappedFileSize;
             if (fileTailOffset > offset) {
+                // 如果 offset 正好处于一个 mappedFile 中间，那么就将该 mappedFile 相关 position 设置到 offset 处
+                // 由于 offset 是 commitlog 全局的一个偏移，单个 mappedFile 中的 position 是文件内的相对偏移
+                // 所以要将绝对偏移 offset 通过 % this.mappedFileSize 转换为相对偏移
                 if (offset >= file.getFileFromOffset()) {
+                    // file 中的 position 指的是文件内部的相对位置
+                    // offset 指的是全局绝对位置
                     file.setWrotePosition((int) (offset % this.mappedFileSize));
                     file.setCommittedPosition((int) (offset % this.mappedFileSize));
                     file.setFlushedPosition((int) (offset % this.mappedFileSize));
                 } else {
+                    // 如果整个文件都在 offset 之外，那么整个文件都是无效的，删除
                     file.destroy(1000);
                     willRemoveFiles.add(file);
                 }
             }
         }
-
+        // 将文件从 mappedFiles 中删除
         this.deleteExpiredFile(willRemoveFiles);
     }
 
@@ -235,6 +242,7 @@ public class MappedFileQueue implements Swappable {
 
 
     public boolean load() {
+        // user.home/stpre/commitlog
         File dir = new File(this.storePath);
         File[] ls = dir.listFiles();
         if (ls != null) {
@@ -297,6 +305,8 @@ public class MappedFileQueue implements Swappable {
     }
 
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
+        // 如果没有合适的 commitlog 文件来存放 startOffset 之后的数据，那么就新创建一个 mappedFile
+        // 这里的 createOffset 就是新 mappedFile 文件的起始 offset(全局)
         long createOffset = -1;
         MappedFile mappedFileLast = getLastMappedFile();
 
@@ -445,6 +455,8 @@ public class MappedFileQueue implements Swappable {
     public long getMaxOffset() {
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
+            // 初始加载之前的 commitlog 文件时 ReadPosition 设置为 mappedFileSize
+            // org.apache.rocketmq.store.MappedFileQueue.doLoad
             return mappedFile.getFileFromOffset() + mappedFile.getReadPosition();
         }
         return 0;
@@ -681,6 +693,7 @@ public class MappedFileQueue implements Swappable {
                         this.mappedFileSize,
                         this.mappedFiles.size());
                 } else {
+                    // 每个 commitlog 文件是 1G，现在根据全局的 offset 就能定位到该 offset 所在 commitlog 文件 index
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {

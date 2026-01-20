@@ -34,7 +34,7 @@ import org.apache.rocketmq.store.exception.ConsumeQueueException;
  */
 public class QueueOffsetOperator {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
-
+    // key : Topic-QueueId  value: 该 consumer queue 最大的 offset
     private ConcurrentMap<String, Long> topicQueueTable = new ConcurrentHashMap<>(1024);
     private ConcurrentMap<String, Long> batchTopicQueueTable = new ConcurrentHashMap<>(1024);
 

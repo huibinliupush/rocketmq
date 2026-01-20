@@ -122,9 +122,11 @@ public abstract class NettyRemotingAbstract {
 
     /**
      * custom rpc hooks
+     * 1. name server : ZoneRouteRPCHook
      */
     protected List<RPCHook> rpcHooks = new ArrayList<>();
 
+    // org.apache.rocketmq.broker.BrokerController.initialRequestPipeline
     protected RequestPipeline requestPipeline;
 
     protected AtomicBoolean isShuttingDown = new AtomicBoolean(false);
@@ -140,7 +142,9 @@ public abstract class NettyRemotingAbstract {
      * @param permitsAsync  Number of permits for asynchronous requests.
      */
     public NettyRemotingAbstract(final int permitsOneway, final int permitsAsync) {
+        // server : 256 , client : 65535
         this.semaphoreOneway = new Semaphore(permitsOneway, true);
+        // server : 64 , client : 65535
         this.semaphoreAsync = new Semaphore(permitsAsync, true);
     }
 
@@ -534,7 +538,9 @@ public abstract class NettyRemotingAbstract {
                 future.completeExceptionally(new RemotingTimeoutException("invokeAsyncImpl call timeout"));
                 return future;
             }
-
+            // IO 线程负责从 responseTable 中取出 responseFuture，然后设置响应信息
+            // 回调 InvokeCallback 的是不同的线程，读取 responseFuture 的是别的线程， 这时会有可见性问题
+            // 所以需要用 AtomicReference 来包装 ResponseFuture
             AtomicReference<ResponseFuture> responseFutureReference = new AtomicReference<>();
             final ResponseFuture responseFuture = new ResponseFuture(channel, opaque, request, timeoutMillis - costTime,
                 new InvokeCallback() {
@@ -545,6 +551,8 @@ public abstract class NettyRemotingAbstract {
 
                     @Override
                     public void operationSucceed(RemotingCommand response) {
+                        // 读取 future 中的 responseFuture 的是别的线程
+                        // 所以需要用 AtomicReference 来包装 ResponseFuture
                         future.complete(responseFutureReference.get());
                     }
 
@@ -600,7 +608,7 @@ public abstract class NettyRemotingAbstract {
                     responseFuture.setCause(t);
                     invokeCallback.operationComplete(responseFuture);
                 }
-            })
+            }) // whenComplete 中的 function 完成之后执行 thenAccept
             .thenAccept(responseFuture -> invokeCallback.operationSucceed(responseFuture.getResponseCommand()))
             .exceptionally(t -> {
                 invokeCallback.operationFail(ExceptionUtils.getRealException(t));

@@ -49,6 +49,7 @@ public class TimerCheckpoint {
     }
 
     public TimerCheckpoint(final String scpPath) throws IOException {
+        // user.home/store/config/timercheck
         File file = new File(scpPath);
         UtilAll.ensureDirOK(file.getParent());
         boolean fileExists = file.exists();

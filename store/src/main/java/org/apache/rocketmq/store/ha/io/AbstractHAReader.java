@@ -36,10 +36,13 @@ public abstract class AbstractHAReader {
             try {
                 int readSize = socketChannel.read(byteBufferRead);
                 for (HAReadHook readHook : readHookList) {
+                    // 更新 lastReadTimestamp
                     readHook.afterRead(readSize);
                 }
                 if (readSize > 0) {
                     readSizeZeroTimes = 0;
+                    // 如果遇到粘包拆包问题，无法解码出一个完整的数据包，那么就不会读取 byteBufferRead 中的数据
+                    // 数据一致停留在 byteBufferRead 中，result 仍然返回 true , 等待下一次从 socket 读取
                     boolean result = processReadResult(byteBufferRead);
                     if (!result) {
                         LOGGER.error("Process read result failed");

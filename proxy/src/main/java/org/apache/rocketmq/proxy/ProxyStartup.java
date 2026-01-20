@@ -62,19 +62,30 @@ public class ProxyStartup {
             super.appendStartAndShutdown(startAndShutdown);
         }
     }
+    // proxy 的本地模式主要开三个监听端口，分别是作为 proxy 角色的 grpc 协议端口和 remote 协议端口
+    // 以及作为 broker 的监听端口
 
+    // proxy 配置默认会加载 rocket home 中的 conf 目录中的 rmq-proxy.json 文件内容
+    // 如果明确指定 -pc 那么就加载指定的文件内容 (json 格式)
+    // broker 配置默认会加载 rocket home 中的 conf 目录中的 broker.conf 文件内容
+    // org.apache.rocketmq.proxy.config.ProxyConfig.brokerConfigPath
+
+    // -bc(Broker config file path for local mode) , -pc(Proxy config file path) , -pm(Proxy run in local or cluster mode)
+    // -h , -n
     public static void main(String[] args) {
         try {
             // parse argument from command line
             CommandLineArgument commandLineArgument = parseCommandLineArgument(args);
+            // 初始化 ConfigurationManager （通过 -pc 中指定的配置以及 CommandLine 生成最终配置）
             initConfiguration(commandLineArgument);
 
-            // init thread pool monitor for proxy.
+            // init thread pool monitor for proxy. 定时打印所有存活线程的 jstack
             initThreadPoolMonitor();
-
+            // grpc 的 threadpool
             ThreadPoolExecutor executor = createServerExecutor();
-
-            MessagingProcessor messagingProcessor = createMessagingProcessor();
+            // 区分 cluster 模式和 local 模式
+            // local 模式创建 broker 启动
+            MessagingProcessor messagingProcessor = createMessagingProcessor(); // 重点步骤
 
             // create grpcServer
             GrpcServer grpcServer = GrpcServerBuilder.newBuilder(executor, ConfigurationManager.getProxyConfig().getGrpcServerPort())
@@ -85,7 +96,11 @@ public class ProxyStartup {
                 .shutdownTime(ConfigurationManager.getProxyConfig().getGrpcShutdownTimeSeconds(), TimeUnit.SECONDS)
                 .build();
             PROXY_START_AND_SHUTDOWN.appendStartAndShutdown(grpcServer);
-
+            // proxy 也支持 rocketmq 的 remote 协议，客户端也可以通过 remote 协议来与 proxy 交互
+            // With remoting protocol in proxy, the remoting(协议) client is able to connect to proxy in the unified architecture,
+            // which is stateless and has separate computing and storage. The proxy will focus on traffic management,
+            // connection management, and observability while the broker pays more attention to
+            // performance, storage, low latency, and high availability.
             RemotingProtocolServer remotingServer = new RemotingProtocolServer(messagingProcessor);
             PROXY_START_AND_SHUTDOWN.appendStartAndShutdown(remotingServer);
 
@@ -115,14 +130,19 @@ public class ProxyStartup {
         if (StringUtils.isNotBlank(commandLineArgument.getProxyConfigPath())) {
             System.setProperty(Configuration.CONFIG_PATH_PROPERTY, commandLineArgument.getProxyConfigPath());
         }
+        // 初始化 proxyHome 默认为 ROCKETMQ_HOME
         ConfigurationManager.initEnv();
+        // 从配置文件 -pc 中加载 proxyConfig , authConfig
         ConfigurationManager.intConfig();
+        // command line 优先级最高, 设置 NamesrvAddr ， BrokerConfigPath ， ProxyMode
         setConfigFromCommandLineArgument(commandLineArgument);
         log.info("Current configuration: " + ConfigurationManager.formatProxyConfig());
 
     }
 
     protected static CommandLineArgument parseCommandLineArgument(String[] args) {
+        // -bc(Broker config file path for local mode) , -pc(Proxy config file path) , -pm(Proxy run in local or cluster mode)
+        // -h , -n
         CommandLine commandLine = ServerUtil.parseCmdLine("mqproxy", args,
             buildCommandlineOptions(), new DefaultParser());
         if (commandLine == null) {
@@ -130,11 +150,13 @@ public class ProxyStartup {
         }
 
         CommandLineArgument commandLineArgument = new CommandLineArgument();
+        // 将 CommandLine 中的 longOpt 和 value 设置到 CommandLineArgument 中
         MixAll.properties2Object(ServerUtil.commandLine2Properties(commandLine), commandLineArgument);
         return commandLineArgument;
     }
 
     private static Options buildCommandlineOptions() {
+        // -h , -n
         Options options = ServerUtil.buildCommandlineOptions(new Options());
 
         Option opt = new Option("bc", "brokerConfigPath", true, "Broker config file path for local mode");
@@ -169,10 +191,12 @@ public class ProxyStartup {
         MessagingProcessor messagingProcessor;
 
         if (ProxyMode.isClusterMode(proxyModeStr)) {
+            // DefaultMessagingProcessor
             messagingProcessor = DefaultMessagingProcessor.createForClusterMode();
             ProxyMetricsManager proxyMetricsManager = ProxyMetricsManager.initClusterMode(ConfigurationManager.getProxyConfig());
             PROXY_START_AND_SHUTDOWN.appendStartAndShutdown(proxyMetricsManager);
         } else if (ProxyMode.isLocalMode(proxyModeStr)) {
+            // 根据 proxyConfig 中的 -bc , -n 配置创建 BrokerController
             BrokerController brokerController = createBrokerController();
             ProxyMetricsManager.initLocalMode(brokerController.getBrokerMetricsManager(), ConfigurationManager.getProxyConfig());
             StartAndShutdown brokerControllerWrapper = new StartAndShutdown() {
@@ -220,7 +244,9 @@ public class ProxyStartup {
 
     public static ThreadPoolExecutor createServerExecutor() {
         ProxyConfig config = ConfigurationManager.getProxyConfig();
+        // 16 + PROCESSOR_NUMBER * 2
         int threadPoolNums = config.getGrpcThreadPoolNums();
+        // 100000
         int threadPoolQueueCapacity = config.getGrpcThreadPoolQueueCapacity();
         ThreadPoolExecutor executor = ThreadPoolMonitor.createAndMonitor(
             threadPoolNums,

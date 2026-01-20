@@ -163,6 +163,7 @@ public interface ConsumeQueueInterface extends FileQueueLifeCycle {
 
     /**
      * Correct min offset by min commit log offset.
+     * 通过当前 commitlog 中最小的 minPhyOffset ，修正所有 consumerqueue 中的 minOffset
      * @param minCommitLogOffset min commit log offset
      */
     void correctMinOffset(long minCommitLogOffset);

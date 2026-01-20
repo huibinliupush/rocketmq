@@ -109,13 +109,14 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
     private final ByteBuffer handshakeHeaderBuffer = ByteBuffer.allocate(HANDSHAKE_HEADER_SIZE);
     private final ByteBuffer transferHeaderBuffer = ByteBuffer.allocate(TRANSFER_HEADER_SIZE);
     private final AutoSwitchHAService haService;
-    private final ByteBuffer byteBufferRead = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE);
+    private final ByteBuffer byteBufferRead = ByteBuffer.allocate(READ_MAX_BUFFER_SIZE); // 4M
     private final DefaultMessageStore messageStore;
     private final EpochFileCache epochCache;
 
     private final Long brokerId;
-
+    // 与 master 的连接
     private SocketChannel socketChannel;
+    // connect master 之后，注册 op_read
     private Selector selector;
     private AbstractHAReader haReader;
     private HAWriter haWriter;
@@ -128,8 +129,9 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
      * last time that slave reports offset to master.
      */
     private long lastWriteTimestamp;
-
+    // slave 向 master 报告的最大 commitlog offset
     private long currentReportedOffset;
+    // 从 readBuffer 中处理过的内容位置
     private int processPosition;
     private volatile HAConnectionState currentState;
     /**
@@ -290,29 +292,33 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
     private boolean sendHandshakeHeader() throws IOException {
         this.handshakeHeaderBuffer.position(0);
         this.handshakeHeaderBuffer.limit(HANDSHAKE_HEADER_SIZE);
-        // Original state
+        // Original state  ， 当前 ha 的阶段 （4字节）
         this.handshakeHeaderBuffer.putInt(HAConnectionState.HANDSHAKE.ordinal());
-        // IsSyncFromLastFile
+        // IsSyncFromLastFile （2字节）默认为 0
         short isSyncFromLastFile = this.haService.getDefaultMessageStore().getMessageStoreConfig().isSyncFromLastFile() ? (short) 1 : (short) 0;
         this.handshakeHeaderBuffer.putShort(isSyncFromLastFile);
-        // IsAsyncLearner role
+        // IsAsyncLearner role（2字节）默认为 0
         short isAsyncLearner = this.haService.getDefaultMessageStore().getMessageStoreConfig().isAsyncLearner() ? (short) 1 : (short) 0;
         this.handshakeHeaderBuffer.putShort(isAsyncLearner);
-        // Slave brokerId
+        // Slave brokerId（8字节）
         this.handshakeHeaderBuffer.putLong(this.brokerId);
 
         this.handshakeHeaderBuffer.flip();
+        // 向 master 发送 ha Handshake
         return this.haWriter.write(this.socketChannel, this.handshakeHeaderBuffer);
     }
 
     private void handshakeWithMaster() throws IOException {
+        // 向 master 发送 ha Handshake
         boolean result = this.sendHandshakeHeader();
         if (!result) {
             closeMasterAndWait();
         }
-
+        // 等待 master 响应
         this.selector.select(5000);
-
+        // 读取 master 的 Handshake 响应
+        // byteBufferRead (4M 大小)
+        // 处理完 master Handshake 响应之后，状态就变为 TRANSFER
         result = this.haReader.read(this.socketChannel, this.byteBufferRead);
         if (!result) {
             closeMasterAndWait();
@@ -333,6 +339,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
         final long maxPhyOffset = this.messageStore.getMaxPhyOffset();
         if (maxPhyOffset > this.currentReportedOffset) {
             this.currentReportedOffset = maxPhyOffset;
+            // TRANSFER
             result = reportSlaveOffset(currentState, this.currentReportedOffset);
         }
         return result;
@@ -350,6 +357,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                     changeCurrentState(HAConnectionState.HANDSHAKE);
                 }
             }
+            // ReportedOffset 设置成当前 commitlog MaxPhyOffset
             this.currentReportedOffset = this.messageStore.getMaxPhyOffset();
             this.lastReadTimestamp = System.currentTimeMillis();
         }
@@ -358,6 +366,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
 
     private boolean transferFromMaster() throws IOException {
         boolean result;
+        // 如果超过 5s 的心跳间隔没有向 master report offset 了，那么就 reportSlaveOffset
         if (isTimeToReportOffset()) {
             LOGGER.info("Slave report current offset {}", this.currentReportedOffset);
             result = reportSlaveOffset(HAConnectionState.TRANSFER, this.currentReportedOffset);
@@ -365,7 +374,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                 return false;
             }
         }
-
+        // 等待读事件，master 会发送 transfer data
         this.selector.select(1000);
 
         result = this.haReader.read(this.socketChannel, this.byteBufferRead);
@@ -388,20 +397,31 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                         this.flowMonitor.shutdown(true);
                         return;
                     case READY:
+                        // init 之后状态变为 READY
+                        // org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAClient.init
                         // Truncate invalid msg first
                         final long truncateOffset = AutoSwitchHAClient.this.haService.truncateInvalidMsg();
                         if (truncateOffset >= 0) {
                             AutoSwitchHAClient.this.epochCache.truncateSuffixByOffset(truncateOffset);
                         }
+                        // 与 master 建立连接，成功之后状态变为 HANDSHAKE
                         if (!connectMaster()) {
                             LOGGER.warn("AutoSwitchHAClient connect to master {} failed", this.masterHaAddress.get());
                             waitForRunning(1000 * 5);
                         }
                         continue;
                     case HANDSHAKE:
+                        // slave 在与 master 建立好 ha 连接之后，就开始进入 ha 的 HANDSHAKE 阶段
+                        // slave 向 master 发送 handshake 请求
+                        // slave 处理 master 的 handshake 响应
+                        // 处理完 master Handshake 响应之后，状态就变为 TRANSFER
                         handshakeWithMaster();
                         continue;
                     case TRANSFER:
+                        // 等待读取 master 发送过来 transfer data
+                        // 在 HANDSHAKE 阶段， slave 截断日志之后，就会向 master reportSlaveMaxOffset
+                        // master 随后转变为 TRANSFER ， 会向 slave 发送 transfer data
+                        // slave 就在这里接收 transfer data ，然后继续向 master reportSlaveMaxOffset
                         if (!transferFromMaster()) {
                             closeMasterAndWait();
                             continue;
@@ -441,15 +461,18 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
         } else {
             final EpochFileCache masterEpochCache = new EpochFileCache();
             masterEpochCache.initCacheFromEntries(masterEpochEntries);
+            // 设置 master last epoch 的 endOffset 为 master 当前 commitlog 的最大 offset
             masterEpochCache.setLastEpochEntryEndOffset(masterEndOffset);
+            // 本地 epoch
             final List<EpochEntry> localEpochEntries = this.epochCache.getAllEntries();
             final EpochFileCache localEpochCache = new EpochFileCache();
             localEpochCache.initCacheFromEntries(localEpochEntries);
+            // 设置 本地 last epoch 的 endOffset 为本节点当前 commitlog 的最大 offset
             localEpochCache.setLastEpochEntryEndOffset(this.messageStore.getMaxPhyOffset());
 
             LOGGER.info("master epoch entries is {}", masterEpochCache.getAllEntries());
             LOGGER.info("local epoch entries is {}", localEpochEntries);
-
+            // 查找有效的 epoch , 从后往前依次查找，如果两者的 startOffet (有效的 epoch) 相同，则 consistentOffset 取两者较小的 endOffset
             final long truncateOffset = localEpochCache.findConsistentPoint(masterEpochCache);
 
             LOGGER.info("truncateOffset is {}", truncateOffset);
@@ -463,11 +486,13 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                 LOGGER.error("Failed to truncate slave log to {}", truncateOffset);
                 return false;
             }
+            // StartOffset() >= truncateOffset 的 epoch 全部删除
             this.epochCache.truncateSuffixByOffset(truncateOffset);
             LOGGER.info("Truncate slave log to {} success, change to transfer state", truncateOffset);
             changeCurrentState(HAConnectionState.TRANSFER);
             this.currentReportedOffset = truncateOffset;
         }
+        // 向 master 报告当前 slave commitlog 最大 offset
         if (!reportSlaveMaxOffset(HAConnectionState.TRANSFER)) {
             LOGGER.error("AutoSwitchHAClient report max offset to master failed");
             return false;
@@ -479,15 +504,23 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
 
         @Override
         protected boolean processReadResult(ByteBuffer byteBufferRead) {
+            // readSocketPos 之前的都是从 socket 读取到的内容
             int readSocketPos = byteBufferRead.position();
             try {
                 while (true) {
+                    // 未处理的字节数
                     int diff = byteBufferRead.position() - AutoSwitchHAClient.this.processPosition;
+                    // master handshake 阶段的响应 header 大小
                     if (diff >= AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE) {
+                        // 本次从 processPosition 位置处开始处理
                         final int processPosition = AutoSwitchHAClient.this.processPosition;
+                        // 读取 current state （4字节）
                         int masterState = byteBufferRead.getInt(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 20);
+                        // body size (4字节)
                         int bodySize = byteBufferRead.getInt(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 16);
+                        // offset (8字节) ： master commitlog 最大 offset
                         long masterOffset = byteBufferRead.getLong(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 12);
+                        // epoch （4字节）：master 当前 epoch
                         int masterEpoch = byteBufferRead.getInt(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 4);
                         long masterEpochStartOffset = 0;
                         long confirmOffset = 0;
@@ -509,24 +542,32 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                         boolean isComplete = true;
                         switch (AutoSwitchHAClient.this.currentState) {
                             case HANDSHAKE: {
+                                // buffer 中的数据不够解码，跳出循环，等待下一次 socket 读取
                                 if (diff < AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE + bodySize) {
                                     // The received HANDSHAKE data is not complete
                                     isComplete = false;
                                     break;
                                 }
+                                // 前面已经解码出 HANDSHAKE_HEADER 了
                                 AutoSwitchHAClient.this.processPosition += AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE;
                                 // Truncate log
                                 int entrySize = AutoSwitchHAConnection.EPOCH_ENTRY_SIZE;
+                                // master 传送过来的 epoch entry 数目
                                 final int entryNums = bodySize / entrySize;
                                 final ArrayList<EpochEntry> epochEntries = new ArrayList<>(entryNums);
                                 for (int i = 0; i < entryNums; i++) {
+                                    // 解码 body, 读取 epoch entry
                                     int epoch = byteBufferRead.getInt(AutoSwitchHAClient.this.processPosition + i * entrySize);
                                     long startOffset = byteBufferRead.getLong(AutoSwitchHAClient.this.processPosition + i * entrySize + 4);
                                     epochEntries.add(new EpochEntry(epoch, startOffset));
                                 }
                                 byteBufferRead.position(readSocketPos);
+                                // body 完成解码
                                 AutoSwitchHAClient.this.processPosition += bodySize;
                                 LOGGER.info("Receive handshake, masterMaxPosition {}, masterEpochEntries:{}, try truncate log", masterOffset, epochEntries);
+                                // 日志截断 （目的是与 master 的 commitlog 对齐）
+                                // 找到与 master 一直的 offset ,进行截断
+                                // Compare the master and slave's epoch file, find consistent point, do truncate.
                                 if (!doTruncate(epochEntries, masterOffset)) {
                                     waitForRunning(1000 * 2);
                                     LOGGER.error("AutoSwitchHAClient truncate log failed in handshake state");
@@ -563,7 +604,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                                 if (bodySize > 0) {
                                     AutoSwitchHAClient.this.messageStore.appendToCommitLog(masterOffset, bodyData, 0, bodyData.length);
                                 }
-
+                                // slave 的 ConfirmOffset 为 master 的 confirmOffset 与 slave commitlog 最大 offset 的最小值
                                 haService.getDefaultMessageStore().setConfirmOffset(Math.min(confirmOffset, messageStore.getMaxPhyOffset()));
 
                                 if (!reportSlaveMaxOffset(HAConnectionState.TRANSFER)) {
@@ -580,7 +621,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                         }
 
                     }
-
+                    // buffer 中的数据不够解码，让其继续停留在 buffer 中，等待下一次 socket 读取
                     if (!byteBufferRead.hasRemaining()) {
                         byteBufferRead.position(AutoSwitchHAClient.this.processPosition);
                         byteBufferRead.compact();

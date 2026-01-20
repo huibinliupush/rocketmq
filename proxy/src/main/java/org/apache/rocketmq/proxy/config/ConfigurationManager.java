@@ -42,6 +42,7 @@ public class ConfigurationManager {
 
     public static void intConfig() throws Exception {
         configuration = new Configuration();
+        // 从配置文件 -pc 中加载 proxyConfig , authConfig
         configuration.init();
     }
 

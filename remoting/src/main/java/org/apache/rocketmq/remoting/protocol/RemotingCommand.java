@@ -89,7 +89,15 @@ public class RemotingCommand {
     private int opaque = requestId.getAndIncrement();
     private int flag = 0;
     private String remark;
+    // customHeader 中自定义的 headers 在序列化的时候会先被写入 extFields 中
+    // 然后 extFields 跟随 RemotingCommand 一起被序列化
+
+    // 存储 customHeader 类中非静态的 fieldName -> fieldValue
     private HashMap<String, String> extFields;
+    // 如果继承 FastCodesHeader ，那么 customHeader 也会被序列化 (RocketMq 序列化方式)
+    // see : org.apache.rocketmq.remoting.protocol.RocketMQSerializable.rocketMQProtocolEncode(org.apache.rocketmq.remoting.protocol.RemotingCommand, io.netty.buffer.ByteBuf)
+
+    // JSON 序列化方式则只会序列化 extFields
     private transient CommandCustomHeader customHeader;
     private transient CommandCustomHeader cachedHeader;
 
@@ -189,10 +197,14 @@ public class RemotingCommand {
     }
 
     public static RemotingCommand decode(final ByteBuf byteBuffer) throws RemotingCommandException {
+        // headerLength: serializeType(1字节) + headerSize（3字节）
+        // header
+        // body
         int length = byteBuffer.readableBytes();
         int oriHeaderLen = byteBuffer.readInt();
+        // 取底 24 位，也就是三个字节表示 header length
         int headerLength = getHeaderLength(oriHeaderLen);
-        if (headerLength > length - 4) {
+        if (headerLength > length - 4) { // headerLength > header + body
             throw new RemotingCommandException("decode error, bad header length: " + headerLength);
         }
 
@@ -210,6 +222,7 @@ public class RemotingCommand {
     }
 
     public static int getHeaderLength(int length) {
+        // 取底 24 位，也就是三个字节表示 header length
         return length & 0xFFFFFF;
     }
 
@@ -234,6 +247,7 @@ public class RemotingCommand {
     }
 
     public static SerializeType getProtocolType(int source) {
+        // 取高位字节，表示序列化方式
         return SerializeType.valueOf((byte) ((source >> 24) & 0xFF));
     }
 
@@ -458,20 +472,26 @@ public class RemotingCommand {
     public void fastEncodeHeader(ByteBuf out) {
         int bodySize = this.body != null ? this.body.length : 0;
         int beginIndex = out.writerIndex();
-        // skip 8 bytes
+        // skip 8 bytes ， 跳过 length（四字节）和 headerLength（四字节 的位置
         out.writeLong(0);
         int headerSize;
         if (SerializeType.ROCKETMQ == serializeTypeCurrentRPC) {
             if (customHeader != null && !(customHeader instanceof FastCodesHeader)) {
+                // 将 customHeader 类中非静态的 fieldName -> fieldValue 转移到 extFields
                 this.makeCustomHeaderToNet();
             }
+            // RocketMQ 的序列化方式
             headerSize = RocketMQSerializable.rocketMQProtocolEncode(this, out);
         } else {
             this.makeCustomHeaderToNet();
+            // 将 RemotingCommand 中除了 body 的部分全部 JSON 序列化成 bytes (header)
             byte[] header = RemotingSerializable.encode(this);
             headerSize = header.length;
+            // 写入 header
             out.writeBytes(header);
         }
+        // length : 4(headerLength) + headerSize + bodySize
+        // headerLength: serializeType(1字节) + headerSize（3字节）
         out.setInt(beginIndex, 4 + headerSize + bodySize);
         out.setInt(beginIndex + 4, markProtocolType(headerSize, serializeTypeCurrentRPC));
     }

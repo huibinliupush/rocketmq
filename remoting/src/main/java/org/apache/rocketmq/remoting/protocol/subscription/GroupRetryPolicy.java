@@ -23,7 +23,9 @@ import com.google.common.base.MoreObjects;
 public class GroupRetryPolicy {
     private final static RetryPolicy DEFAULT_RETRY_POLICY = new CustomizedRetryPolicy();
     private GroupRetryPolicyType type = GroupRetryPolicyType.CUSTOMIZED;
+    // 指数退避
     private ExponentialRetryPolicy exponentialRetryPolicy;
+    // 明确指定重试间隔
     private CustomizedRetryPolicy customizedRetryPolicy;
 
     public GroupRetryPolicyType getType() {

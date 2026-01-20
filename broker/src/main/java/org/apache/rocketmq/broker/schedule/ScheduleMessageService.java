@@ -74,7 +74,7 @@ public class ScheduleMessageService extends ConfigManager {
 
     private final ConcurrentSkipListMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
         new ConcurrentSkipListMap<>();
-
+    // 加载自 storePath/config/delayOffset.json 文件
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
         new ConcurrentHashMap<>(32);
     private final AtomicBoolean started = new AtomicBoolean(false);
@@ -220,6 +220,7 @@ public class ScheduleMessageService extends ConfigManager {
 
     @Override
     public boolean load() {
+        // storePath/config/delayOffset.json 文件
         boolean result = super.load();
         result = result && this.parseDelayLevel();
         result = result && this.correctDelayOffset();

@@ -40,7 +40,7 @@ public class StoreCheckpoint {
     private volatile long confirmPhyOffset = 0;
 
     public StoreCheckpoint(final String scpPath) throws IOException {
-        File file = new File(scpPath);
+        File file = new File(scpPath); // storePath/checkpoint 文件
         UtilAll.ensureDirOK(file.getParent());
         boolean fileExists = file.exists();
 

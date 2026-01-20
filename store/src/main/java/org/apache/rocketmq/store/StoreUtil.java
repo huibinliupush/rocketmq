@@ -35,6 +35,7 @@ public class StoreUtil {
 
     @SuppressWarnings("restriction")
     public static long getTotalPhysicalMemorySize() {
+        // 24G
         long physicalTotal = 1024 * 1024 * 1024 * 24L;
         OperatingSystemMXBean osmxb = ManagementFactory.getOperatingSystemMXBean();
         if (osmxb instanceof com.sun.management.OperatingSystemMXBean) {

@@ -63,7 +63,9 @@ public class CheckpointFile<T> {
     }
 
     public CheckpointFile(final String filePath, final CheckpointSerializer<T> serializer) {
+        // user.home/store/epochFileCheckpoint(默认)
         this.filePath = filePath;
+        // EpochEntrySerializer
         this.serializer = serializer;
     }
 
@@ -94,26 +96,43 @@ public class CheckpointFile<T> {
             MixAll.string2File(content, this.filePath);
         }
     }
-
+    /**
+     * Entry Checkpoint file util
+     * Format:
+     * <li>First line:  Entries size
+     * <li>Second line: Entries crc32
+     * <li>Next: Entry data per line
+     * <p>
+     * Example:
+     * <li>2 (size)
+     * <li>773307083 (crc32)
+     * <li>7-7000 (entry data)  : startOffset - endOffset
+     * <li>8-8000 (entry data)
+     */
     private List<T> read(String filePath) throws IOException {
         final ArrayList<T> result = new ArrayList<>();
         synchronized (this) {
+            // epochFileCheckpoint 文件
             final File file = new File(filePath);
             if (!file.exists()) {
                 return result;
             }
             try (BufferedReader reader = Files.newBufferedReader(file.toPath())) {
-                // Read size
+                // Read size (epoch entry 的条数)
+                // 文件中的第一行存储的是 epoch entry 的条数
                 int expectedLines = Integer.parseInt(reader.readLine());
 
                 // Read block crc
+                // 第二行存储的是 epoch data 的 crc
                 int expectedCrc32 = Integer.parseInt(reader.readLine());
 
                 // Read entries
+                // 剩下的就是 epoch entry ， 每行存储一个
                 StringBuilder sb = new StringBuilder();
                 String line = reader.readLine();
                 while (line != null) {
                     sb.append(line).append(System.lineSeparator());
+                    // 解析 epoch entry ,格式： epoch-startOffset (EpochEntry)
                     final T entry = this.serializer.fromLine(line);
                     if (entry != null) {
                         result.add(entry);
@@ -143,6 +162,7 @@ public class CheckpointFile<T> {
      */
     public List<T> read() throws IOException {
         try {
+            // epochFileCheckpoint 文件加载 epochEntrys
             List<T> result = this.read(this.filePath);
             if (CollectionUtils.isEmpty(result)) {
                 result = this.read(this.getBackFilePath());
