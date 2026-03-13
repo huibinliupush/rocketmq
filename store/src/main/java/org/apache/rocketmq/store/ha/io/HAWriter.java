@@ -41,6 +41,7 @@ public class HAWriter {
             if (writeSize > 0) {
                 writeSizeZeroTimes = 0;
             } else if (writeSize == 0) {
+                // 如果写不到 socket 超过三次，则放弃，返回 false
                 if (++writeSizeZeroTimes >= 3) {
                     break;
                 }

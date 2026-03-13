@@ -20,10 +20,13 @@ import org.apache.rocketmq.remoting.CommandCustomHeader;
 import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 
 public class GetMetaDataResponseHeader implements CommandCustomHeader {
+    // raft 集群 id
     private String group;
     private String controllerLeaderId;
     private String controllerLeaderAddress;
+    // 访问的该 raft 节点是否为 leader
     private boolean isLeader;
+    // raft 集群中的节点，端口为对外 broker 的端口 9770
     private String peers;
 
     public GetMetaDataResponseHeader() {

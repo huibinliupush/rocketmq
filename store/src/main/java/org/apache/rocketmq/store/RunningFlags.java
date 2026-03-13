@@ -31,7 +31,7 @@ public class RunningFlags {
     private static final int FENCED_BIT = 1 << 5;
 
     private static final int LOGIC_DISK_FULL_BIT = 1 << 6;
-
+    // controller 初始化时设置 true
     private volatile int flagBits = 0;
 
     public RunningFlags() {
@@ -107,6 +107,7 @@ public class RunningFlags {
     }
 
     public void makeFenced(boolean fenced) {
+        // controller 初始化时设置 true
         if (fenced) {
             this.flagBits |= FENCED_BIT;
         } else {

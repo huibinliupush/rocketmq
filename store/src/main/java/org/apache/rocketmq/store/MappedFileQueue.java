@@ -275,7 +275,8 @@ public class MappedFileQueue implements Swappable {
 
             try {
                 MappedFile mappedFile = new DefaultMappedFile(file.getPath(), mappedFileSize);
-
+                // 后续 recover 会重新计算，重新设置
+                // org.apache.rocketmq.store.ConsumeQueue.recover
                 mappedFile.setWrotePosition(this.mappedFileSize);
                 mappedFile.setFlushedPosition(this.mappedFileSize);
                 mappedFile.setCommittedPosition(this.mappedFileSize);

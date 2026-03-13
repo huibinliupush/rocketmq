@@ -16,6 +16,10 @@
  */
 package org.apache.rocketmq.store.config;
 
+// auto switch ha 只会设置 SYNC_MASTER ， 通过配置需要 ack 的副本数来设置 ASYNC_MASTER
+// ackNum = 0 , 即为 ASYNC_MASTER ， acNum != 0 则为 SYNC_MASTER
+// see : GroupTransferService
+// 应答的 slave 不需要是 syncStateSet 中的 slave，ackNum = -1 则是需要syncStateSet 中的所有 slave 应答
 public enum BrokerRole {
     ASYNC_MASTER,
     SYNC_MASTER,

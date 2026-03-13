@@ -347,7 +347,9 @@ public class BrokerConfig extends BrokerIdentity {
      * Is startup controller mode, which support auto switch broker's role.
      */
     private boolean enableControllerMode = false;
-
+    // 如果是通过 dns 来查找 controller 地址，这里的配置将会是 domain:port
+    // 通过 domain 查找出来 ip 地址，然后加上 :port
+    // see : org.apache.rocketmq.broker.out.BrokerOuterAPI.dnsLookupAddressByDomain
     private String controllerAddr = "";
 
     private boolean fetchControllerAddrByDnsLookup = false;

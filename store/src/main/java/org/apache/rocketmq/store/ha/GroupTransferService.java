@@ -34,6 +34,20 @@ import org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAService;
 
 /**
  * GroupTransferService Service
+ *     在 auto ha switch 的模式下，master 的 commitlog 是通过 ha 传输到 slave
+ *     这里会等待 ha 的传输，如果 requestsRead 队列中，请求传输的内容已经通过 ha 传过去了 transferOK = ok ，那么就无需等待了
+ *     如果还没有就等待传输完成直到 timeout
+ *     因为现在 slave 已经 ackOffset 回来了,see:org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAConnection.ReadSocketService.HAServerReader.processReadResult
+ *     所以要唤醒 groupTransferServer 去检查生产者写到master的commitlog是否
+ *     传送到了slave,因为slave每次接收到master的transfer
+ *     之后都会执行这里的 ackOffset 流程，如果ackOffset大于
+ *     这里的push2SlaveMaxOffset，就会调用notifyTransferSome方法唤醒 groupTransferServer
+ *     在doWaitTransfer方法中根据生产者每次写入master需要同步的
+ *     slave个数，是同步一个？还是SyncStateSet中的slave都需要同步
+ *     来判断生产者的消息是否同步到了应有的slave个数
+ *     req.getNextOffset 表示生产者写入到commitlog的offset
+ *     slave ack 的offset需要达到getNextOffset才算同步到slave
+ *     只要ack的slave个数满足要求就算写入消息成功
  */
 public class GroupTransferService extends ServiceThread {
 
@@ -78,7 +92,18 @@ public class GroupTransferService extends ServiceThread {
     // 在 auto ha switch 的模式下，master 的 commitlog 是通过 ha 传输到 slave
     // 这里会等待 ha 的传输，如果 requestsRead 队列中，请求传输的内容已经通过 ha 传过去了 transferOK = ok ，那么就无需等待了
     // 如果还没有就等待传输完成直到 timeout
-    private void doWaitTransfer() {
+    // 因为现在 slave 已经 ackOffset 回来了,see:org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAConnection.ReadSocketService.HAServerReader.processReadResult
+    // 所以要唤醒 groupTransferServer 去检查生产者写到master的commitlog是否
+    // 传送到了slave,因为slave每次接收到master的transfer
+    // 之后都会执行这里的 ackOffset 流程，如果ackOffset大于
+    // 这里的push2SlaveMaxOffset，就会调用notifyTransferSome方法唤醒 groupTransferServer
+    // 在doWaitTransfer方法中根据生产者每次写入master需要同步的
+    // slave个数，是同步一个？还是SyncStateSet中的slave都需要同步
+    // 来判断生产者的消息是否同步到了应有的slave个数
+    // req.getNextOffset 表示生产者写入到commitlog的offset
+    // slave ack 的offset需要达到getNextOffset才算同步到slave
+    // 只要ack的slave个数满足要求就算写入消息成功
+    private void doWaitTransfer() { // 主要用于判断生产者的消息是否同步到了应有的slave个数
         if (!this.requestsRead.isEmpty()) {
             for (CommitLog.GroupCommitRequest req : this.requestsRead) {
                 boolean transferOK = false;
@@ -90,9 +115,12 @@ public class GroupTransferService extends ServiceThread {
                     if (i > 0) {
                         this.notifyTransferObject.waitForRunning(1);
                     }
-
+                    // 不需要副本应答或者需要一个副本应答
                     if (!allAckInSyncStateSet && req.getAckNums() <= 1) {
                         // 要 Transfer 的日志已经通过 ha 传输过去了，这里就不需要在 Transfer 了
+                        // 只要传输过去一个就可以了 transferOK = true
+                        // Push2SlaveMaxOffset 会在每次 slave ackOffset 的时候被修改
+                        // org.apache.rocketmq.store.ha.DefaultHAService.notifyTransferSome
                         transferOK = haService.getPush2SlaveMaxOffset().get() >= req.getNextOffset();
                         continue;
                     }
@@ -109,6 +137,7 @@ public class GroupTransferService extends ServiceThread {
 
                         // Include master
                         int ackNums = 1;
+                        // syncStateSet 中的 slave 全部需要应答
                         for (HAConnection conn : haService.getConnectionList()) {
                             final AutoSwitchHAConnection autoSwitchHAConnection = (AutoSwitchHAConnection) conn;
                             if (syncStateSet.contains(autoSwitchHAConnection.getSlaveId()) && autoSwitchHAConnection.getSlaveAckOffset() >= req.getNextOffset()) {
@@ -122,6 +151,7 @@ public class GroupTransferService extends ServiceThread {
                     } else {
                         // Include master
                         int ackNums = 1;
+                        // 指定应答的slave数量AckNums,不需要是 syncStateSet 中的 slave
                         for (HAConnection conn : haService.getConnectionList()) {
                             // TODO: We must ensure every HAConnection represents a different slave
                             // Solution: Consider assign a unique and fixed IP:ADDR for each different slave

@@ -118,7 +118,9 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
     private SocketChannel socketChannel;
     // connect master 之后，注册 op_read
     private Selector selector;
+    // HAClientReader
     private AbstractHAReader haReader;
+    // HAWriter
     private HAWriter haWriter;
     private FlowMonitor flowMonitor;
     /**
@@ -130,6 +132,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
      */
     private long lastWriteTimestamp;
     // slave 向 master 报告的最大 commitlog offset
+    // 初始为 truncateOffset
     private long currentReportedOffset;
     // 从 readBuffer 中处理过的内容位置
     private int processPosition;
@@ -461,13 +464,13 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
         } else {
             final EpochFileCache masterEpochCache = new EpochFileCache();
             masterEpochCache.initCacheFromEntries(masterEpochEntries);
-            // 设置 master last epoch 的 endOffset 为 master 当前 commitlog 的最大 offset
+            // master 当前 commitlog 的最大 offset
             masterEpochCache.setLastEpochEntryEndOffset(masterEndOffset);
             // 本地 epoch
             final List<EpochEntry> localEpochEntries = this.epochCache.getAllEntries();
             final EpochFileCache localEpochCache = new EpochFileCache();
             localEpochCache.initCacheFromEntries(localEpochEntries);
-            // 设置 本地 last epoch 的 endOffset 为本节点当前 commitlog 的最大 offset
+            // 本节点当前 commitlog 的最大 offset
             localEpochCache.setLastEpochEntryEndOffset(this.messageStore.getMaxPhyOffset());
 
             LOGGER.info("master epoch entries is {}", masterEpochCache.getAllEntries());
@@ -519,6 +522,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                         // body size (4字节)
                         int bodySize = byteBufferRead.getInt(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 16);
                         // offset (8字节) ： master commitlog 最大 offset
+                        // transfer 阶段为master本次传输日志在commitlog中的起始offset
                         long masterOffset = byteBufferRead.getLong(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 12);
                         // epoch （4字节）：master 当前 epoch
                         int masterEpoch = byteBufferRead.getInt(processPosition + AutoSwitchHAConnection.HANDSHAKE_HEADER_SIZE - 4);
@@ -566,7 +570,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                                 AutoSwitchHAClient.this.processPosition += bodySize;
                                 LOGGER.info("Receive handshake, masterMaxPosition {}, masterEpochEntries:{}, try truncate log", masterOffset, epochEntries);
                                 // 日志截断 （目的是与 master 的 commitlog 对齐）
-                                // 找到与 master 一直的 offset ,进行截断
+                                // 找到与 master 一致的 offset ,进行截断
                                 // Compare the master and slave's epoch file, find consistent point, do truncate.
                                 if (!doTruncate(epochEntries, masterOffset)) {
                                     waitForRunning(1000 * 2);
@@ -575,7 +579,7 @@ public class AutoSwitchHAClient extends ServiceThread implements HAClient {
                                 }
                             }
                             break;
-                            case TRANSFER: {
+                            case TRANSFER: { // 处理 master 传输过来的 commitlog
                                 if (diff < AutoSwitchHAConnection.TRANSFER_HEADER_SIZE + bodySize) {
                                     // The received TRANSFER data is not complete
                                     isComplete = false;

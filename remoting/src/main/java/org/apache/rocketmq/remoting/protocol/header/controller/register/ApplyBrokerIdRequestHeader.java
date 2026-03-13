@@ -32,9 +32,9 @@ public class ApplyBrokerIdRequestHeader implements CommandCustomHeader {
     private String clusterName;
 
     private String brokerName;
-
+    // controller 分配的 brokerId
     private Long appliedBrokerId;
-
+    // brokerAddress : 第一次获取 brokerId 时候的时间戳
     private String registerCheckCode;
 
     public ApplyBrokerIdRequestHeader() {

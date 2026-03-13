@@ -98,6 +98,24 @@ public class AutoSwitchHAConnection implements HAConnection {
      * org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAConnection.AbstractWriteSocketService#run()
      */
     private volatile boolean isSlaveSendHandshake = false;
+    /**
+     *
+     * 由于 Ha 是基于流进行日志复制的，我们无法分清日志的边界 (也即传输的一批日志可能横跨多个 MasterEpoch)，Slave 无法感知到 MasterEpoch 的变化，也就无法及时修改 EpochFile。
+     *
+     * 因此，我们做了如下改进：
+     *
+     * Master 传输⽇志时，保证⼀次发送的⼀个 batch 是同⼀个 epoch 中的，⽽不能横跨多个 epoch。可以在WriteSocketService 中新增两个变量：
+     *
+     * currentTransferEpoch：代表当前 WriteSocketService.nextTransferFromWhere 对应在哪个 epoch 中
+     *
+     * currentTransferEpochEndOffset： 对应 currentTransferEpoch 的 end offset.。如果 currentTransferEpoch == MaxEpoch，则 currentTransferEpochEndOffset= -1，表示没有界限。
+     *
+     * WriteSocketService 传输下⼀批⽇志时 (假设这⼀批⽇志总⼤⼩为 size)，如果发现
+     *
+     * nextTransferFromWhere + size > currentTransferEpochEndOffset，则将 selectMappedBufferResult limit ⾄ currentTransferEpochEndOffset。 最后，修改 currentTransferEpoch 和 currentTransferEpochEndOffset ⾄下⼀个 epoch。
+     *
+     * 相应的， Slave 接受⽇志时，如果从 header 中发现 epoch 变化，则记录到本地 epoch⽂件中。
+     * */
     private volatile int currentTransferEpoch = -1;
     private volatile long currentTransferEpochEndOffset = 0;
     private volatile boolean isSyncFromLastFile = false;
@@ -209,6 +227,24 @@ public class AutoSwitchHAConnection implements HAConnection {
         return this.writeSocketService.getNextTransferFromWhere();
     }
 
+    /**
+     *
+     * 由于 Ha 是基于流进行日志复制的，我们无法分清日志的边界 (也即传输的一批日志可能横跨多个 MasterEpoch)，Slave 无法感知到 MasterEpoch 的变化，也就无法及时修改 EpochFile。
+     *
+     * 因此，我们做了如下改进：
+     *
+     * Master 传输⽇志时，保证⼀次发送的⼀个 batch 是同⼀个 epoch 中的，⽽不能横跨多个 epoch。可以在WriteSocketService 中新增两个变量：
+     *
+     * currentTransferEpoch：代表当前 WriteSocketService.nextTransferFromWhere 对应在哪个 epoch 中
+     *
+     * currentTransferEpochEndOffset： 对应 currentTransferEpoch 的 end offset.。如果 currentTransferEpoch == MaxEpoch，则 currentTransferEpochEndOffset= -1，表示没有界限。
+     *
+     * WriteSocketService 传输下⼀批⽇志时 (假设这⼀批⽇志总⼤⼩为 size)，如果发现
+     *
+     * nextTransferFromWhere + size > currentTransferEpochEndOffset，则将 selectMappedBufferResult limit ⾄ currentTransferEpochEndOffset。 最后，修改 currentTransferEpoch 和 currentTransferEpochEndOffset ⾄下⼀个 epoch。
+     *
+     * 相应的， Slave 接受⽇志时，如果从 header 中发现 epoch 变化，则记录到本地 epoch⽂件中。
+     * */
     private void changeTransferEpochToNext(final EpochEntry entry) {
         this.currentTransferEpoch = entry.getEpoch();
         this.currentTransferEpochEndOffset = entry.getEndOffset();
@@ -240,6 +276,11 @@ public class AutoSwitchHAConnection implements HAConnection {
             // 追上当前进度，caughtUpTimeMs 就是当前时间戳，追上上一次 transfer 时候的 master 进度，时间戳就是 lastTransferTimeMs
             long caughtUpTimeMs = this.haService.getDefaultMessageStore().getMaxPhyOffset() == slaveMaxOffset ? System.currentTimeMillis() : this.lastTransferTimeMs;
             // 更新 slave 的 LastCaughtUpTime
+            // 一共有两个地方需要更新 slave 的 lastCaughtUpTime
+            // 一个是这里（slave 向 master  report ack offset 时候，如果发现 slave 的 ackOffset 已经追上了 master ），
+            // 另一个是 master 向 slave transfer commitlog 的时候
+            // org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAConnection.AbstractWriteSocketService.transferToSlave
+            // 如果 master 发现需要传输的 commtlog  size 为 0 ，说明 slave 已经追赶上了进度
             this.haService.updateConnectionLastCaughtUpTime(this.slaveId, caughtUpTimeMs);
             // if its slaveMaxOffset >= current confirmOffset, and it is caught up to an offset within the current leader epoch.
             this.haService.maybeExpandInSyncStateSet(this.slaveId, slaveMaxOffset);
@@ -277,6 +318,7 @@ public class AutoSwitchHAConnection implements HAConnection {
             while (!this.isStopped()) {
                 try {
                     this.selector.select(1000);
+                    // 用 1M 的 byteBufferRead 去读 slave ha connection 上的内容
                     boolean ok = this.haReader.read(this.socketChannel, this.byteBufferRead);
                     if (!ok) {
                         AutoSwitchHAConnection.LOGGER.error("processReadEvent error");
@@ -514,6 +556,7 @@ public class AutoSwitchHAConnection implements HAConnection {
         protected final ByteBuffer byteBufferHeader = ByteBuffer.allocate(TRANSFER_HEADER_SIZE);
         // Store master epochFileCache: (Epoch + startOffset) * 1000
         private final ByteBuffer handShakeBuffer = ByteBuffer.allocate(EPOCH_ENTRY_SIZE * 1000);
+        // master 从哪里开始传输 commitlog 到 slave
         protected long nextTransferFromWhere = -1;
         protected boolean lastWriteOver = true;
         protected long lastWriteTimestamp = System.currentTimeMillis();
@@ -685,11 +728,13 @@ public class AutoSwitchHAConnection implements HAConnection {
                         waitForRunning(100);
                         return;
                     }
+                    // 每一批次传输的日志必须属于同一 epoch
                     size = (int) (currentEpochEndOffset - this.nextTransferFromWhere);
                     changeTransferEpochToNext(epochEntry);
                 }
-
+                // 本次要传输的日志其实位置
                 this.transferOffset = this.nextTransferFromWhere;
+                // 下一次传输日志的位置
                 this.nextTransferFromWhere += size;
                 updateLastTransferInfo();
 
@@ -741,7 +786,7 @@ public class AutoSwitchHAConnection implements HAConnection {
                                 isSlaveSendHandshake = false;
                             }
                             break;
-                        case TRANSFER:
+                        case TRANSFER: // master就是在这里将commitlog源源不断的传给slave
                             // 在 slave ack offset  的时候会将 slaveRequestOffset 设置为 slave ack offset ，状态设置为 TRANSFER
                             // org.apache.rocketmq.store.ha.autoswitch.AutoSwitchHAConnection.ReadSocketService.HAServerReader.processReadResult
                             if (-1 == slaveRequestOffset) {
@@ -755,7 +800,9 @@ public class AutoSwitchHAConnection implements HAConnection {
                                     // must be the startOffset of a file (maybe the last file, or the minOffset)
                                     final MessageStoreConfig config = haService.getDefaultMessageStore().getMessageStoreConfig();
                                     if (AutoSwitchHAConnection.this.isSyncFromLastFile) {
+                                        // 获取 master 当前最大的 commitlog offset
                                         long masterOffset = haService.getDefaultMessageStore().getCommitLog().getMaxOffset();
+                                        // 最后一个 commitlog 文件的其实 offset
                                         masterOffset = masterOffset - (masterOffset % config.getMappedFileSizeCommitLog());
                                         if (masterOffset < 0) {
                                             masterOffset = 0;

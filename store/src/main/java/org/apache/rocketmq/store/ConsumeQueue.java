@@ -469,7 +469,8 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
                             if (isExtAddr(tagsCode)) {
                                 maxExtAddr = tagsCode;
                             }
-
+                            // 如果整个 consumequeue 中都没有找到 offset  > 截断offset 的消息索引
+                            // 那么之前的 mappedFiled 也不可能在出现了，直接返回
                             if (pos == logicFileSize) {
                                 return;
                             }
@@ -568,12 +569,14 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
         }
         // 先检查最近的一条消息索引，如果无效的话，剩下的就不用看了
         SelectMappedBufferResult lastRecord = null;
+        // 快速路径
         try {
             int maxReadablePosition = lastMappedFile.getReadPosition();
             // 读取最近一次写入的消息
             lastRecord = lastMappedFile.selectMappedBuffer(maxReadablePosition - ConsumeQueue.CQ_STORE_UNIT_SIZE,
                 ConsumeQueue.CQ_STORE_UNIT_SIZE);
             if (null != lastRecord) {
+                // 最近写入的一条消息索引
                 ByteBuffer buffer = lastRecord.getByteBuffer();
                 long commitLogOffset = buffer.getLong();
                 // lastRecord 是无效索引

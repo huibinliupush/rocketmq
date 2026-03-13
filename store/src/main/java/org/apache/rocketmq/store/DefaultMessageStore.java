@@ -167,7 +167,7 @@ public class DefaultMessageStore implements MessageStore {
     // 定时 flush , see : org.apache.rocketmq.store.DefaultMessageStore.addScheduleTask
     protected StoreCheckpoint storeCheckpoint;
     private TimerMessageStore timerMessageStore;
-
+    // CommitLogDispatcherCalcBitMap : org.apache.rocketmq.broker.BrokerController.initializeMessageStore
     private final LinkedList<CommitLogDispatcher> dispatcherList;
 
     private RocksDBMessageStore rocksDBMessageStore;
@@ -195,7 +195,7 @@ public class DefaultMessageStore implements MessageStore {
     private volatile long brokerInitMaxOffset = -1L;
     // see : org.apache.rocketmq.broker.BrokerController.registerMessageStoreHook
     private final List<PutMessageHook> putMessageHookList = new ArrayList<>();
-
+    // org.apache.rocketmq.broker.BrokerController.registerMessageStoreHook
     private SendMessageBackHook sendMessageBackHook;
 
     private final ConcurrentSkipListMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
@@ -210,7 +210,7 @@ public class DefaultMessageStore implements MessageStore {
     private final int dispatchRequestOrderlyQueueSize = 16;
 
     private final DispatchRequestOrderlyQueue dispatchRequestOrderlyQueue = new DispatchRequestOrderlyQueue(dispatchRequestOrderlyQueueSize);
-
+    // 每次产生新的 master 之后都会更新为新的 epoch
     private long stateMachineVersion = 0L; // 当前 master epoch
 
     // this is a unmodifiableMap
@@ -223,6 +223,7 @@ public class DefaultMessageStore implements MessageStore {
         final MessageArrivingListener messageArrivingListener, final BrokerConfig brokerConfig,
         final ConcurrentMap<String, TopicConfig> topicConfigTable) throws IOException {
         // NotifyMessageArrivingListener
+        // see : org.apache.rocketmq.broker.BrokerController.BrokerController(org.apache.rocketmq.common.BrokerConfig, org.apache.rocketmq.remoting.netty.NettyServerConfig, org.apache.rocketmq.remoting.netty.NettyClientConfig, org.apache.rocketmq.store.config.MessageStoreConfig, org.apache.rocketmq.auth.config.AuthConfig)
         this.messageArrivingListener = messageArrivingListener;
         this.brokerConfig = brokerConfig;
         this.messageStoreConfig = messageStoreConfig;
@@ -1666,6 +1667,8 @@ public class DefaultMessageStore implements MessageStore {
 
     // Fetch and compute the newest confirmOffset.
     // Even if it is just inited.
+    // confirmOffset 为当前master commitlog 最大 offset 与
+    // 当前 SyncStateSet 中所有 slave 的 MaxOffset 的最⼩值
     @Override
     public long getConfirmOffset() {
         // bytes that have been stored in commit log

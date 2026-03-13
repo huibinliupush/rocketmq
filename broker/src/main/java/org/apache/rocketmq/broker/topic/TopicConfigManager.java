@@ -67,6 +67,7 @@ public class TopicConfigManager extends ConfigManager {
     private transient final Lock topicConfigTableLock = new ReentrantLock();
     // 加载自 System.getProperty("user.home") + File.separator + "store" /config/topics.json
     protected ConcurrentMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<>(1024);
+    // 每次选主之后会改变
     protected DataVersion dataVersion = new DataVersion();
     protected transient BrokerController brokerController;
 

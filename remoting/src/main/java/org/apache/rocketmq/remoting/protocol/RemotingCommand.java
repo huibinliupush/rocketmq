@@ -98,7 +98,7 @@ public class RemotingCommand {
     // see : org.apache.rocketmq.remoting.protocol.RocketMQSerializable.rocketMQProtocolEncode(org.apache.rocketmq.remoting.protocol.RemotingCommand, io.netty.buffer.ByteBuf)
 
     // JSON 序列化方式则只会序列化 extFields
-    private transient CommandCustomHeader customHeader;
+    private transient CommandCustomHeader customHeader; // 一般存放各个 requestCode 对应的请求实体信息
     private transient CommandCustomHeader cachedHeader;
 
     private SerializeType serializeTypeCurrentRPC = serializeTypeConfigInThisServer;

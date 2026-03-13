@@ -30,6 +30,7 @@ public class DefaultElectPolicy implements ElectPolicy {
 
     // <clusterName, brokerName, brokerAddr>, Used to judge whether a broker
     // has preliminary qualification to be selected as master
+    // org.apache.rocketmq.controller.impl.manager.RaftReplicasInfoManager.isBrokerActive
     private BrokerValidPredicate validPredicate;
 
     // <clusterName, brokerName, brokerAddr, BrokerLiveInfo>, Used to obtain the BrokerLiveInfo information of a broker
@@ -41,11 +42,12 @@ public class DefaultElectPolicy implements ElectPolicy {
             return o1.getMaxOffset() == o2.getMaxOffset() ? o1.getElectionPriority() - o2.getElectionPriority() :
                 (int) (o2.getMaxOffset() - o1.getMaxOffset());
         } else {
-            return o2.getEpoch() - o1.getEpoch();
+            return o2.getEpoch() - o1.getEpoch(); // epoch 大的优先
         }
     };
-
+    // see : org.apache.rocketmq.controller.impl.JRaftControllerStateMachine.electMaster
     public DefaultElectPolicy(BrokerValidPredicate validPredicate, BrokerLiveInfoGetter brokerLiveInfoGetter) {
+        // org.apache.rocketmq.controller.impl.manager.RaftReplicasInfoManager.isBrokerActive
         this.validPredicate = validPredicate;
         this.brokerLiveInfoGetter = brokerLiveInfoGetter;
     }
@@ -94,6 +96,7 @@ public class DefaultElectPolicy implements ElectPolicy {
 
     private Long tryElect(String clusterName, String brokerName, Set<Long> brokers, Long oldMaster,
         Long preferBrokerId) {
+        // org.apache.rocketmq.controller.impl.manager.RaftReplicasInfoManager.isBrokerActive
         if (this.validPredicate != null) {
             // 首先在备选集合中，过滤出所有 active 的 broker
             brokers = brokers.stream().filter(brokerAddr -> this.validPredicate.check(clusterName, brokerName, brokerAddr)).collect(Collectors.toSet());

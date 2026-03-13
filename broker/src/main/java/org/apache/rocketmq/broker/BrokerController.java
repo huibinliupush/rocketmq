@@ -267,6 +267,7 @@ public class BrokerController {
     protected ExecutorService loadBalanceExecutor;
     protected ExecutorService endTransactionExecutor;
     // EnableControllerMode -> true
+    // see : org.apache.rocketmq.broker.BrokerController.initializeScheduledTasks
     protected boolean updateMasterHAServerAddrPeriodically = false;
     private BrokerStats brokerStats;
     // BrokerIP1 : listenPort
@@ -291,6 +292,7 @@ public class BrokerController {
     private BrokerPreOnlineService brokerPreOnlineService;
     // Skip register for broker is isolated
     // 不向 nameserver , controller 注册以及发送心跳
+    // controller 初始化时设置 true
     protected volatile boolean isIsolated = false;
     protected volatile long minBrokerIdInGroup = 0;
     protected volatile String minBrokerAddrInGroup = null;
@@ -742,7 +744,7 @@ public class BrokerController {
                         try {
                             if (System.currentTimeMillis() - lastSyncTimeMs > 60 * 1000) {
                                 // 每隔 60s
-                                BrokerController.this.getSlaveSynchronize().syncAll();
+                                BrokerController.this.getSlaveSynchronize().syncAll(); // 向 master 同步
                                 lastSyncTimeMs = System.currentTimeMillis();
                             }
 
@@ -801,6 +803,7 @@ public class BrokerController {
                 @Override
                 public void run() {
                     try {
+                        // 每隔 10s
                         BrokerController.this.brokerOuterAPI.fetchNameServerAddr();
                     } catch (Throwable e) {
                         LOG.error("Failed to fetch nameServer address", e);
@@ -864,6 +867,7 @@ public class BrokerController {
             MessageStorePluginContext context = new MessageStorePluginContext(
                 messageStoreConfig, brokerStatsManager, messageArrivingListener, brokerConfig, configuration);
             // 构建 AbstractPluginMessageStore 责任链，最后一个为 DefaultMessageStore
+            // org.apache.rocketmq.common.BrokerConfig.messageStorePlugIn 参数指定自定义的 PluginMessageStore 类
             this.messageStore = MessageStoreFactory.build(context, defaultMessageStore);
             this.messageStore.getDispatcherList().addFirst(new CommitLogDispatcherCalcBitMap(this.brokerConfig, this.consumerFilterManager));
             if (messageStoreConfig.isTimerWheelEnable()) {
@@ -887,7 +891,8 @@ public class BrokerController {
         if (!result) {
             return false;
         }
-
+        // 初始化 DefaultMessageStore ，TimerMessageStore , 创建 AutoSwitchHAService
+        // 存储模块相关组件均在这里初始化
         result = this.initializeMessageStore();
         if (!result) {
             return false;
@@ -901,13 +906,15 @@ public class BrokerController {
         boolean result = true;
 
         if (this.brokerConfig.isEnableControllerMode()) {
+            // 高可用模块
             this.replicasManager = new ReplicasManager(this);
             this.replicasManager.setFenced(true);
         }
 
         if (messageStore != null) {
+            // 添加 putMessageHook , sendMessageBackHook
             registerMessageStoreHook();
-            // 加载 storepath 下的 commitlog , consumequeue , index 等文件
+            // 加载 storepath 下的 commitlog , consumequeue , index 等文件，recover 相关 position
             result = this.messageStore.load();
         }
 
@@ -934,7 +941,7 @@ public class BrokerController {
             initializeResources();
             // 向 server 中注册 requestCode 对应的 <processor, executor>
             registerProcessor();
-            // 初始化 broker 的各种定时任务（主从同步，更新 nameserver 地址，消费信息的持久化等）
+            // 初始化 broker 的各种定时任务（主从同步[非 controller auto switch]，更新 nameserver 地址，消费信息的持久化等）
             initializeScheduledTasks();
 
             initialTransaction();
@@ -1683,7 +1690,7 @@ public class BrokerController {
 
         if (this.messageStore != null) {
             // 初始化 haService , 并 start
-            this.messageStore.start();
+            this.messageStore.start(); // 存储模块启动
         }
 
         if (this.timerMessageStore != null) {
@@ -1798,6 +1805,7 @@ public class BrokerController {
 
         if (messageStoreConfig.getTotalReplicas() > 1 && this.brokerConfig.isEnableSlaveActingMaster()) {
             // Skip register for broker is isolated
+            // 当完成主从选举之后，这里变为 false
             isIsolated = true;
         }
 
@@ -1806,12 +1814,12 @@ public class BrokerController {
         }
         // ha 逻辑的开启，以及各种重要的服务都在这里启动
         startBasicService();
-
+        // 向 nameserver 进行注册
         if (!isIsolated && !this.messageStoreConfig.isEnableDLegerCommitLog() && !this.messageStoreConfig.isDuplicationEnable()) {
             changeSpecialServiceStatus(this.brokerConfig.getBrokerId() == MixAll.MASTER_ID);
             this.registerBrokerAll(true, false, true);
         }
-
+        // 每隔 30s 向 nameserver 注册
         scheduledFutures.add(this.scheduledExecutorService.scheduleAtFixedRate(new AbstractBrokerRunnable(this.getBrokerIdentity()) {
             @Override
             public void run0() {
@@ -1824,6 +1832,7 @@ public class BrokerController {
                         BrokerController.LOG.info("Skip register for broker is isolated");
                         return;
                     }
+                    // 每隔 30s
                     BrokerController.this.registerBrokerAll(true, false, brokerConfig.isForceRegister());
                 } catch (Throwable e) {
                     BrokerController.LOG.error("registerBrokerAll Exception", e);
@@ -1859,6 +1868,7 @@ public class BrokerController {
             @Override
             public void run() {
                 try {
+                    // 每 5s 向 name server 获取集群信息 ClusterInfo ，刷新本地缓存
                     BrokerController.this.brokerOuterAPI.refreshMetadata();
                 } catch (Exception e) {
                     LOG.error("ScheduledTask refresh metadata exception", e);
@@ -1871,6 +1881,7 @@ public class BrokerController {
         scheduledFutures.add(this.brokerHeartbeatExecutorService.scheduleAtFixedRate(new AbstractBrokerRunnable(this.getBrokerIdentity()) {
             @Override
             public void run0() {
+                // 主从选举之后为 false
                 if (isIsolated) {
                     return;
                 }

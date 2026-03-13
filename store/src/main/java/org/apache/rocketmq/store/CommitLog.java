@@ -95,8 +95,10 @@ public class CommitLog implements Swappable {
     private final ThreadLocal<PutMessageThreadLocal> putMessageThreadLocal;
     // from StoreCheckpoint
     // see : org.apache.rocketmq.store.StoreCheckpoint.StoreCheckpoint
-    // 主节点的 confirmOffset 是所有 SyncStateSet 副本中最小的 MaxOffset 点。从节点的 confirmOffset 由两个值决定：
+    // 主节点的 confirmOffset 是 master 当前的 MaxPhyOffset 与所有 SyncStateSet 中的 slave  ackOffset 的最小值
+    // 从节点的 confirmOffset 由两个值决定：
     // 一个是主节点发送消息时，Header 中包含的当前 confirmOffset；另一个是当前的最大 confirmOffset。取这两个值中的最小值
+    // slave 的 ConfirmOffset 为 master 的 confirmOffset 与 slave commitlog 最大 offset 的最小值
     protected volatile long confirmOffset = -1L;
 
     private volatile long beginTimeInLock = 0;
@@ -446,19 +448,20 @@ public class CommitLog implements Swappable {
             if (byteBuffer.remaining() <= 4) {
                 return new DispatchRequest(-1, false /* fail */);
             }
-            // 1 TOTAL SIZE
+            // 1 TOTAL SIZE // 整个消息条目占用的总字节数
             int totalSize = byteBuffer.getInt();
             if (byteBuffer.remaining() < totalSize - 4) {
                 return new DispatchRequest(-1, false /* fail */);
             }
 
             // 2 MAGIC CODE
-            int magicCode = byteBuffer.getInt();
+            int magicCode = byteBuffer.getInt(); // 固定值 0xdaa320a7，用于快速校验文件是否为合法的RocketMQ CommitLog 文件
             switch (magicCode) {
                 case MessageDecoder.MESSAGE_MAGIC_CODE:
                 case MessageDecoder.MESSAGE_MAGIC_CODE_V2:
                     break;
-                case BLANK_MAGIC_CODE:
+                case BLANK_MAGIC_CODE: // // End of file empty MAGIC CODE cbd43194
+                    // 校验到 mappedFile 的末尾，下次循环开始校验下一个 mappedFile
                     return new DispatchRequest(0, true /* success */);
                 default:
                     log.warn("found a illegal magic code 0x" + Integer.toHexString(magicCode));
@@ -468,44 +471,47 @@ public class CommitLog implements Swappable {
             MessageVersion messageVersion = MessageVersion.valueOfMagicCode(magicCode);
 
             byte[] bytesContent = new byte[totalSize];
-
+            // 3. 消息体的CRC32校验码，用于在恢复或读取时检测消息体数据是否损坏
             int bodyCRC = byteBuffer.getInt();
-
+            // 4. 消息所属的消费队列ID
             int queueId = byteBuffer.getInt();
-
+            // 5. 供应用程序使用的标志位，RocketMQ本身不处理
             int flag = byteBuffer.getInt();
-
+            // 6. 消息在当前ConsumeQueue中的逻辑偏移量，可以理解为该队列中消息的序号, offset 均为全局概念
             long queueOffset = byteBuffer.getLong();
-
+            // 7. 消息在整个CommitLog文件中的起始物理偏移量
             long physicOffset = byteBuffer.getLong();
-
+            // 8. 消息的系统标志，用于标识消息是否为压缩消息、事务消息（如Prepared、Commit、Rollback状态）等
             int sysFlag = byteBuffer.getInt();
-
+            // 9. 消息在生产者端被创建的时间戳
             long bornTimeStamp = byteBuffer.getLong();
 
             ByteBuffer byteBuffer1;
             if ((sysFlag & MessageSysFlag.BORNHOST_V6_FLAG) == 0) {
+                // 10. ipv4:BornHost : 生产者的IP地址和端口号
                 byteBuffer1 = byteBuffer.get(bytesContent, 0, 4 + 4);
             } else {
                 byteBuffer1 = byteBuffer.get(bytesContent, 0, 16 + 4);
             }
-
+            // 11. 消息在Broker端被成功存储的时间戳
             long storeTimestamp = byteBuffer.getLong();
 
             ByteBuffer byteBuffer2;
             if ((sysFlag & MessageSysFlag.STOREHOSTADDRESS_V6_FLAG) == 0) {
+                // 12. ipv4: StoreHostAddress : 存储该消息的Broker的IP地址和端口号
                 byteBuffer2 = byteBuffer.get(bytesContent, 0, 4 + 4);
             } else {
                 byteBuffer2 = byteBuffer.get(bytesContent, 0, 16 + 4);
             }
-
+            // 13. 消息可以被某个消费组重新消费的次数
             int reconsumeTimes = byteBuffer.getInt();
-
+            // 14. 事务消息相关字段。如果是事务Prepare消息，则记录其在CommitLog中的偏移量；否则为0
             long preparedTransactionOffset = byteBuffer.getLong();
-
+            // 15. 消息体的长度（字节数）
             int bodyLen = byteBuffer.getInt();
             if (bodyLen > 0) {
                 if (readBody) {
+                    // 16 . 消息的真实业务数据(消息体)
                     byteBuffer.get(bytesContent, 0, bodyLen);
 
                     if (checkCRC) {
@@ -525,18 +531,20 @@ public class CommitLog implements Swappable {
                     byteBuffer.position(byteBuffer.position() + bodyLen);
                 }
             }
-
+            // 17. 消息所属主题名称的长度，限制了主题名最长不能超过255个字符
             int topicLen = messageVersion.getTopicLength(byteBuffer);
+            // 18. 消息所属的主题名称
             byteBuffer.get(bytesContent, 0, topicLen);
             String topic = new String(bytesContent, 0, topicLen, MessageDecoder.CHARSET_UTF8);
 
             long tagsCode = 0;
             String keys = "";
             String uniqKey = null;
-
+            // 19. 消息的自定义属性（如消息的TAG、KEY等）的总长度
             short propertiesLength = byteBuffer.getShort();
             Map<String, String> propertiesMap = null;
             if (propertiesLength > 0) {
+                // 20. 消息的自定义属性内容，以特定格式（如key1:value1\u0001key2:value2）存储
                 byteBuffer.get(bytesContent, 0, propertiesLength);
                 String properties = new String(bytesContent, 0, propertiesLength, MessageDecoder.CHARSET_UTF8);
                 propertiesMap = MessageDecoder.string2messageProperties(properties);
@@ -612,7 +620,8 @@ public class CommitLog implements Swappable {
                     }
                 }
             }
-
+            // 读取到的消息 size 是否和 commitlog 中指定的 totalSize 一致
+            // 一致的话最起码说明格式是正确的，这里我们不校验内容，也就是只校验格式是否正确，不校验 CRC
             int readLength = MessageExtEncoder.calMsgLength(messageVersion, sysFlag, bodyLen, topicLen, propertiesLength);
             if (totalSize != readLength) {
                 doNothingForDeadCode(reconsumeTimes);
@@ -695,6 +704,7 @@ public class CommitLog implements Swappable {
         } else if (this.defaultMessageStore.getMessageStoreConfig().isDuplicationEnable()) {
             return this.confirmOffset;
         } else {
+            // slave 的 ConfirmOffset 就是 maxOffset
             return getMaxOffset();
         }
     }

@@ -145,7 +145,7 @@ public class JRaftController implements Controller {
         nodeOptions.setFsm(this.stateMachine);
 
         this.raftGroupService = new RaftGroupService(controllerConfig.getJraftConfig().getjRaftGroupId(), serverId, nodeOptions);
-
+        // 建立 raft group 节点内部 rpc 端口与外部 rpc 端口（对 broker）的映射
         this.peerIdToAddr = new HashMap<>();
         initPeerIdMap();
 

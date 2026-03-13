@@ -304,7 +304,7 @@ public class DefaultHAService implements HAService {
             this.serverSocketChannel = ServerSocketChannel.open();
             this.selector = NetworkUtil.openSelector();
             this.serverSocketChannel.socket().setReuseAddress(true);
-            this.serverSocketChannel.socket().bind(this.socketAddressListen);
+            this.serverSocketChannel.socket().bind(this.socketAddressListen);// 10912
             if (0 == messageStoreConfig.getHaListenPort()) {
                 messageStoreConfig.setHaListenPort(this.serverSocketChannel.socket().getLocalPort());
                 log.info("OS picked up {} to listen for HA", messageStoreConfig.getHaListenPort());

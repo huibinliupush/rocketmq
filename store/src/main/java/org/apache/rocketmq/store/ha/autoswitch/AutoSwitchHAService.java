@@ -362,6 +362,8 @@ public class AutoSwitchHAService extends DefaultHAService {
     private void markSynchronizingSyncStateSet(final Set<Long> newSyncStateSet) {
         this.writeLock.lock();
         try {
+            // 当检测到 SyncStateSet 改变的时候会设置为 true
+            // 当向 controller 同步完成之后会设置为 false
             this.isSynchronizingSyncStateSet = true;
             this.remoteSyncStateSet.clear();
             this.remoteSyncStateSet.addAll(newSyncStateSet);
@@ -461,6 +463,7 @@ public class AutoSwitchHAService extends DefaultHAService {
             if (!idList.contains(syncId) && this.localBrokerId != null && !Objects.equals(syncId, this.localBrokerId)) {
                 LOGGER.warn("Slave {} is still in syncStateSet, but has lost its connection. So new offset can't be compute.", syncId);
                 // Without check and re-compute, return the confirmOffset's value directly.
+                // ConfirmOffset 直接计算的话就是 maxOffset (Directly)
                 return this.defaultMessageStore.getConfirmOffsetDirectly();
             }
         }
@@ -536,6 +539,8 @@ public class AutoSwitchHAService extends DefaultHAService {
     public long truncateInvalidMsg() throws RocksDBException {
         // Get number of the bytes that have been stored in commit log and not yet dispatched to consume queue.
         long dispatchBehind = this.defaultMessageStore.dispatchBehindBytes();
+        // commitlog 中的字节全部 dispatch 到 consumequeue 中，说明 commitlog 中的消息全部是完整的，不存在无效消息
+        // 所以不需要截断
         if (dispatchBehind <= 0) {
             LOGGER.info("Dispatch complete, skip truncate");
             return -1;
@@ -557,13 +562,16 @@ public class AutoSwitchHAService extends DefaultHAService {
             }
 
             try {
+                // 全局，记住只要是 offset 就是全局的 commitlog offset
                 reputFromOffset = result.getStartOffset();
 
                 int readSize = 0;
                 while (readSize < result.getSize()) {
                     // 校验 buffer 中未 reput 的消息内容
+                    // 这里会检验一条消息，在整个 while 循环中会一条一条消息的校验，直到找到不完整的消息（也就是从这条不完整的消息处开始阶段）
                     DispatchRequest dispatchRequest = this.defaultMessageStore.getCommitLog().checkMessageAndReturnSize(result.getByteBuffer(), false, false);
-                    if (dispatchRequest.isSuccess()) {
+                    if (dispatchRequest.isSuccess()) { // 完整的消息，继续向后校验
+                        // 完整的消息 size
                         int size = dispatchRequest.getMsgSize();
                         if (size > 0) {
                             // 有效消息 size 累加，直到找到无效的消息停止累加，而 reputFromOffset 就是截断位置，其之后的内容全部是无效的
@@ -575,8 +583,8 @@ public class AutoSwitchHAService extends DefaultHAService {
                             reputFromOffset = this.defaultMessageStore.getCommitLog().rollNextFile(reputFromOffset);
                             break;
                         }
-                    } else {
-                        // 校验到此为止，已经找到阶段位置了，就是累加之后的 reputFromOffset
+                    } else { // 找到不完整的消息
+                        // 校验到此为止，已经找到截断位置了，就是累加之后的 reputFromOffset
                         // 此时 reputFromOffset 之后的消息都是无效的
                         doNext = false;
                         break;

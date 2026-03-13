@@ -313,6 +313,7 @@ public class EpochFileCache {
         try {
             if (this.checkpoint != null) {
                 final ArrayList<EpochEntry> entries = new ArrayList<>(this.epochMap.values());
+                // 将 epochmap 写入到 user.home/store/epochFileCheckpoint(默认) 文件中
                 this.checkpoint.write(entries);
             }
         } catch (final IOException e) {

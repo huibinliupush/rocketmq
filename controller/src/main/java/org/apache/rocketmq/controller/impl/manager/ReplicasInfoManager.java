@@ -259,9 +259,9 @@ public class ReplicasInfoManager {
             // 新选举出来的 master epoch + 1
             response.setMasterEpoch(masterEpoch + 1);
             response.setSyncStateSetEpoch(syncStateSetEpoch + 1);
-            // 当前副本集 SyncStateSet，第一次选举之后，只有 master 一个（每次选举完毕之后，都是只有一个 master）
+            // 每次重新选举完毕之后，SyncStateSet 都是只有一个 master，旧的 SyncStateSet 丢弃
             ElectMasterResponseBody responseBody = new ElectMasterResponseBody(newSyncStateSet);
-            // 当前副本集中的成员
+            // 当前副本集中的成员（brokerId : brokerAddress）
             BrokerMemberGroup brokerMemberGroup = buildBrokerMemberGroup(brokerReplicaInfo);
             if (null != brokerMemberGroup) {
                 responseBody.setBrokerMemberGroup(brokerMemberGroup);
@@ -330,6 +330,7 @@ public class ReplicasInfoManager {
     public ControllerResult<ApplyBrokerIdResponseHeader> applyBrokerId(final ApplyBrokerIdRequestHeader request) {
         final String clusterName = request.getClusterName();
         final String brokerName = request.getBrokerName();
+        // broker 向 controller 第一次获取到的 brokerId
         final Long brokerId = request.getAppliedBrokerId();
         // brokerAdress:timestamp
         final String registerCheckCode = request.getRegisterCheckCode();
@@ -348,6 +349,7 @@ public class ReplicasInfoManager {
             return result;
         }
         // broker-set registered
+        // brokerId 是否已经在该副本组中分配过 or brokerId 是否分配给了该 broker (可通过 RegisterCheckCode 判断)
         if (!brokerReplicaInfo.isBrokerExist(brokerId) || registerCheckCode.equals(brokerReplicaInfo.getBrokerRegisterCheckCode(brokerId))) {
             // if brokerId hasn't been assigned or brokerId was assigned to this broker
             result.addEvent(event);
@@ -378,8 +380,9 @@ public class ReplicasInfoManager {
             return result;
         }
         // 副本集中是否已经有 master
+        // alivePredicate -> BrokerValidPredicateWithInvokeTime
         if (syncStateInfo.isMasterExist() && alivePredicate.check(clusterName, brokerName, syncStateInfo.getMasterBrokerId())) {
-            // if master still exist
+            // if master still exist 并且存活
             response.setMasterBrokerId(syncStateInfo.getMasterBrokerId());
             response.setMasterAddress(brokerReplicaInfo.getBrokerAddress(response.getMasterBrokerId()));
             response.setMasterEpoch(syncStateInfo.getMasterEpoch());
@@ -591,6 +594,7 @@ public class ReplicasInfoManager {
                 syncStateInfo.updateMasterInfo(newMaster);
 
                 // Record new newSyncStateSet list
+                // 每次重新选举之后，SyncStateSet 都只有一个元素，那就是新的 master
                 final HashSet<Long> newSyncStateSet = new HashSet<>();
                 newSyncStateSet.add(newMaster);
                 syncStateInfo.updateSyncStateSetInfo(newSyncStateSet);

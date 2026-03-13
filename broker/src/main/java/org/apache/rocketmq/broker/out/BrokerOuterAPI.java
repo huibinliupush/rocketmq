@@ -218,7 +218,7 @@ public class BrokerOuterAPI {
         try {
             java.security.Security.setProperty("networkaddress.cache.ttl", "10");
             int index = domain.indexOf(":");
-            String portStr = domain.substring(index);
+            String portStr = domain.substring(index); // :port
             String domainStr = domain.substring(0, index);
             InetAddress[] addresses = InetAddress.getAllByName(domainStr);
             for (InetAddress address : addresses) {
@@ -1363,9 +1363,10 @@ public class BrokerOuterAPI {
         requestHeader.setEpoch(epoch);
         requestHeader.setMaxOffset(maxOffset);
         requestHeader.setConfirmOffset(confirmOffset);
-        requestHeader.setHeartbeatTimeoutMills(controllerHeartBeatTimeoutMills);
+        requestHeader.setHeartbeatTimeoutMills(controllerHeartBeatTimeoutMills);//10s
         requestHeader.setElectionPriority(electionPriority);
         requestHeader.setBrokerId(brokerId);
+        // 4 线程，32容量
         brokerOuterExecutor.execute(new AbstractBrokerRunnable(new BrokerIdentity(clusterName, brokerName, brokerId, isInBrokerContainer)) {
             @Override
             public void run0() {

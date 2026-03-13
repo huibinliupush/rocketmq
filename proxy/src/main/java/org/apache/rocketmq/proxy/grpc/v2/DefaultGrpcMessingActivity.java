@@ -73,7 +73,7 @@ public class DefaultGrpcMessingActivity extends AbstractStartAndShutdown impleme
     protected EndTransactionActivity endTransactionActivity;
     protected RouteActivity routeActivity;
     protected ClientActivity clientActivity;
-
+    // org.apache.rocketmq.proxy.ProxyStartup.createMessagingProcessor(区分 cluster or local mode)
     protected DefaultGrpcMessingActivity(MessagingProcessor messagingProcessor) {
         this.init(messagingProcessor);
     }

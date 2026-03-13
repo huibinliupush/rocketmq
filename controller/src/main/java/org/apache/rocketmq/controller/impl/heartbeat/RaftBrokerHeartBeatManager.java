@@ -55,7 +55,9 @@ public class RaftBrokerHeartBeatManager implements BrokerHeartbeatManager {
     private JRaftController controller;
     // org.apache.rocketmq.controller.ControllerManager.onBrokerInactive
     private final List<BrokerLifecycleListener> brokerLifecycleListeners = new ArrayList<>();
+    // 单线程
     private final ScheduledExecutorService scheduledService;
+    // 2 线程
     private final ExecutorService executor;
     private final ControllerConfig controllerConfig;
     // broker 向 controller 发送心跳，会将 broker 的相关信息（BrokerIdentityInfo），channel 存储在这里

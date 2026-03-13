@@ -75,6 +75,8 @@ import static org.apache.rocketmq.controller.metrics.ControllerMetricsConstant.L
 import static org.apache.rocketmq.controller.metrics.ControllerMetricsConstant.LABEL_CLUSTER_NAME;
 import static org.apache.rocketmq.controller.metrics.ControllerMetricsConstant.LABEL_ELECTION_RESULT;
 
+// http://thesecretlivesofdata.com/raft/
+// https://github.com/maemual/raft-zh_cn/blob/master/raft-zh_cn.md
 public class JRaftControllerStateMachine implements StateMachine {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.CONTROLLER_LOGGER_NAME);
     private final List<Consumer<Long>> onLeaderStartCallbacks;
@@ -110,6 +112,26 @@ public class JRaftControllerStateMachine implements StateMachine {
      * 再比如 rocketmq 这里， log 记录的就是 broker 的 request : request1,request2,request3,request4
      * 那么对于各个 raft 节点来说，只需要按照 log , 挨个调用这里的 apply 方法，将 log 中的 request 重放
      * 那么各个 raft 节点状态机中保存的数据结构就是一致的
+     *
+     * 首先，领导者进入第一阶段，通过日志复制（AppendEntries）RPC 消息，将日志项复制到集群其他节点上。
+     * 接着，如果领导者接收到大多数的“复制成功”响应后，它将日志项应用到它的状态机（这里的 onApply），并返回成功给客户端。如果领导者没有接收到大多数的“复制成功”响应，
+     * 那么就返回错误给客户端。学到这里，有同学可能有这样的疑问了，领导者将日志项应用到它的状态机，
+     * 怎么没通知跟随者应用日志项呢？这是 Raft 中的一个优化，领导者不直接发送消息通知其他节点应用指定日志项。
+     * 因为领导者的日志复制 RPC 消息或心跳消息，包含了当前最大的，将会被提交（Commit）的日志项索引值。
+     * 所以通过日志复制 RPC 消息或心跳消息，跟随者就可以知道领导者的日志提交位置信息。因此，当其他节点接受领导者的心跳消息，
+     * 或者新的日志复制 RPC 消息后，就会将这条日志项应用到它的状态机。而这个优化，降低了处理客户端请求的延迟，将二阶段提交优化为了一段提交，
+     * 降低了一半的消息延迟。
+     *
+     * 1. 接收到客户端请求后，领导者基于客户端请求中的指令，创建一个新日志项，并附加到本地日志中。
+     * 2. 领导者通过日志复制 RPC，将新的日志项复制到其他的服务器。
+     * 3. 当领导者将日志项，成功复制到大多数的服务器上的时候，领导者会将这条日志项应用到它的状态机中。
+     * 4. 领导者将执行的结果返回给客户端。
+     * 5. 当跟随者接收到心跳信息，或者新的日志复制 RPC 消息后，如果跟随者发现领导者已经提交了某条日志项，而它还没应用，那么跟随者就将这条日志项应用到本地的状态机中。
+     *
+     *
+     * 只有当日志项被复制到大多数节点上时，日志项才处于提交（committed）状态，然后领导者才会将该日志项应用到状态机，并通知跟随者将该日志项应用到状态机。
+     *
+     * candidate 节点在接收到领导者的心跳，或者接收到的投票请求的响应中的任期编号，比它的大的时候会自动变为 follower
      * */
     @Override
     public void onApply(Iterator iter) {
@@ -118,6 +140,7 @@ public class JRaftControllerStateMachine implements StateMachine {
             // node 提交的 RemotingCommand
             byte[] data = iter.getData().array();
             // task 完成后的回调函数
+            // see : org.apache.rocketmq.controller.impl.JRaftController.applyToJRaft
             ControllerClosure controllerClosure = (ControllerClosure) iter.done();
             // iter.getIndex() : log index 提交到 raft group 中的任务都将序列化为一条日志存储下来，每条日志一个编号，
             // 在整个 raft group 内单调递增并复制到每个 raft 节点。
@@ -213,6 +236,8 @@ public class JRaftControllerStateMachine implements StateMachine {
         log.info("process event: term {}, index {}, request code {} success with result {}", term, index, request.getCode(), result.toString());
         if (controllerClosure != null) {
             controllerClosure.setControllerResult(result);
+            // 通知客户端 future complete
+            // 起初在这里进行设置 see : org.apache.rocketmq.controller.impl.JRaftController.applyToJRaft
             controllerClosure.run(Status.OK());
         }
     }
@@ -324,6 +349,14 @@ public class JRaftControllerStateMachine implements StateMachine {
      * 需要注意的是:
      *    程序启动会调用 `onSnapshotLoad` 方法，也就是说业务状态机的数据一致性保障全权由 jraft 接管，业务状态机的启动时应保持状态为空，
      *    如果状态机持久化了数据那么应该在启动时先清除数据，并依赖 raft snapshot + replay raft log 来恢复状态机数据。
+     *
+     * 当leader需要发给某个follower的log entry被丢弃了(因为leader做了snapshot)，leader会将snapshot发给落后太多的follower。
+     * 或者当新加进一台机器时，也会发送snapshot给它。发送snapshot使用新的RPC，InstalledSnapshot
+     *
+     * 做snapshot有一些需要注意的性能点，1. 不要做太频繁，否则消耗磁盘带宽。
+     * 2. 不要做的太不频繁，否则一旦节点重启需要回放大量日志，影响可用性。系统推荐当日志达到某个固定的大小做一次snapshot。
+     * 3. 做一次snapshot可能耗时过长，会影响正常log entry的replicate。
+     * 这个可以通过使用copy-on-write的技术来避免snapshot过程影响正常log entry的replicate。
      * */
     @Override
     public boolean onSnapshotLoad(SnapshotReader reader) {

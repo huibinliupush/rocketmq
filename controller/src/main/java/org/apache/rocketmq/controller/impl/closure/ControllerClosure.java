@@ -33,13 +33,16 @@ public class ControllerClosure implements Closure {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.CONTROLLER_LOGGER_NAME);
     private final RemotingCommand requestEvent;
     private final CompletableFuture<RemotingCommand> future;
+    // 状态机处理之后的结果
     private ControllerResult<?> controllerResult;
+    // 用于向 raft 状态机提交任务
     private Task task;
 
     public ControllerClosure(RemotingCommand requestEvent) {
         // 存储的目的是为了让本机 raft 节点的状态机直接获取，不需要序列化
         // org.apache.rocketmq.controller.impl.JRaftControllerStateMachine.processEvent
         this.requestEvent = requestEvent;
+        // task 提交到 raft 之后，直接向客户端返回该 future
         this.future = new CompletableFuture<>();
         this.task = null;
     }
@@ -49,11 +52,15 @@ public class ControllerClosure implements Closure {
     }
 
     public void setControllerResult(ControllerResult<?> controllerResult) {
+        // 用于设置 raft 状态机的 apply 结果
+        // 首先将请求提交到状态机 apply 方法，执行处理相应的 request
+        // 结果由 raft 状态机设置到这里
         this.controllerResult = controllerResult;
     }
 
     @Override
     public void run(Status status) {
+        // raft 状态机处理完 task 会调用这里
         if (status.isOk()) {
             final RemotingCommand response = RemotingCommand.createResponseCommandWithHeader(controllerResult.getResponseCode(), (CommandCustomHeader) controllerResult.getResponse());
             if (controllerResult.getBody() != null) {
@@ -62,6 +69,7 @@ public class ControllerClosure implements Closure {
             if (controllerResult.getRemark() != null) {
                 response.setRemark(controllerResult.getRemark());
             }
+            // 通知客户端
             future.complete(response);
         } else {
             log.error("Failed to append to jRaft node, error is: {}.", status);

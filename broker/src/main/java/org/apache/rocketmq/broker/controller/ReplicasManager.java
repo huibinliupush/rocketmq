@@ -68,13 +68,16 @@ public class ReplicasManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
 
     private static final int RETRY_INTERVAL_SECOND = 5;
-
+    // 3线程
     private final ScheduledExecutorService scheduledService;
+    // 4线程
     private final ExecutorService executorService;
+    // 4线程，max 10 线程, 32队列容量
     private final ExecutorService scanExecutor;
     private final BrokerController brokerController;
     private final AutoSwitchHAService haService;
     private final BrokerConfig brokerConfig;
+    // BrokerIP1 : nettyServerListenPort
     private final String brokerAddress;
     private final BrokerOuterAPI brokerOuterAPI;
     // 通过 dns 或者配置获取, 每 120s 更新
@@ -96,7 +99,8 @@ public class ReplicasManager {
     private ScheduledFuture<?> slaveSyncFuture;
     // controller 为 broker 分配的 id
     // 对于 slave 来说，brokerId 就是这里的
-    // 对于 master 来说， brokerId 会被设置为 0 ， 而不是这里 controller 分配的
+    // 对于 master 来说， 这里仍然是 controller 分配的 id
+    // 但是这里 org.apache.rocketmq.common.BrokerIdentity.brokerId 会被设置为 0
     private Long brokerControllerId;
 
     private Long masterBrokerId;
@@ -124,8 +128,11 @@ public class ReplicasManager {
         this.brokerConfig = brokerController.getBrokerConfig();
         this.availableControllerAddresses = new ConcurrentHashMap<>();
         this.syncStateSet = new HashSet<>();
+        // BrokerIP1 : nettyServerListenPort
         this.brokerAddress = brokerController.getBrokerAddr();
+        // user.home/store/brokerIdentity
         this.brokerMetadata = new BrokerMetadata(this.brokerController.getMessageStoreConfig().getStorePathBrokerIdentity());
+        // user.home/store/brokerIdentity-temp
         this.tempBrokerMetadata = new TempBrokerMetadata(this.brokerController.getMessageStoreConfig().getStorePathBrokerIdentity() + "-temp");
     }
 
@@ -159,11 +166,12 @@ public class ReplicasManager {
         // 获取 brokerId , role ， 根据 role 变换 master or slave 并开始各自的 ha 逻辑
         if (!startBasicService()) {
             LOGGER.error("Failed to start replicasManager");
+            // 3线程
             this.executorService.submit(() -> {
                 int retryTimes = 0;
                 do {
                     try {
-                        TimeUnit.SECONDS.sleep(RETRY_INTERVAL_SECOND);
+                        TimeUnit.SECONDS.sleep(RETRY_INTERVAL_SECOND);// 5s
                     } catch (InterruptedException ignored) {
 
                     }
@@ -211,6 +219,7 @@ public class ReplicasManager {
             // register 5 times but still unsuccessful
             if (this.state != State.REGISTER_TO_CONTROLLER_DONE) {
                 LOGGER.error("Register to broker failed 5 times");
+                // 隔 5s 重试
                 return false;
             }
         }
@@ -276,6 +285,10 @@ public class ReplicasManager {
                     // 新增 epoch, startOffset 为当前 commitlog 的最大 offset, endOffset 为无限大
                     this.haService.changeToMasterWhenLastRoleIsMaster(newMasterEpoch);
                     this.brokerController.getTopicConfigManager().getDataVersion().nextVersion(newMasterEpoch);
+                    // 重新检查SyncStateSet中的slave是否需要剔除
+                    // 1.curTime - HaConnection.lastCaughtUpTime) > haMaxTimeSlaveNotCatchup(15s)
+                    // 2， slave 不活跃不在connectionCaughtUpTimeTable中
+                    // 如果SyncStateSet发生变动则向controller报告
                     this.executorService.submit(this::checkSyncStateSetAndDoReport);
                     // 当 broker 的角色变更之后需要向 nameserver 重新注册
                     registerBrokerWhenRoleChange();
@@ -295,6 +308,10 @@ public class ReplicasManager {
                 this.haService.changeToMaster(newMasterEpoch);
 
                 this.brokerController.getBrokerConfig().setBrokerId(MixAll.MASTER_ID);
+                // 这里只会设置 SYNC_MASTER ， 通过配置需要 ack 的副本数来设置 ASYNC_MASTER
+                // ackNum = 0 , 即为 ASYNC_MASTER ， acNum != 0 则为 SYNC_MASTER
+                // see : GroupTransferService
+                // 应答的 slave 不需要是 syncStateSet 中的 slave，ackNum = -1 则是需要syncStateSet 中的所有 slave 应答
                 this.brokerController.getMessageStoreConfig().setBrokerRole(BrokerRole.SYNC_MASTER);
                 // 启动 scheduleMessageService， 调度定时消息，将到期的定时消息 reput 到 commitlog
                 // 以及事务消息
@@ -427,6 +444,7 @@ public class ReplicasManager {
             Pair<ElectMasterResponseHeader, Set<Long>> tryElectResponsePair = this.brokerOuterAPI.brokerElect(this.controllerLeaderAddress, this.brokerConfig.getBrokerClusterName(),
                 this.brokerConfig.getBrokerName(), this.brokerControllerId);
             ElectMasterResponseHeader tryElectResponse = tryElectResponsePair.getObject1();
+            // 每次重新选举之后，SyncStateSet 都只有一个元素，那就是新的 master
             Set<Long> syncStateSet = tryElectResponsePair.getObject2();
             final String masterAddress = tryElectResponse.getMasterAddress();
             final Long masterBrokerId = tryElectResponse.getMasterBrokerId();
@@ -623,6 +641,7 @@ public class ReplicasManager {
                 // 第一次启动注册，这里还没有产生 master
                 return true;
             }
+            // 用于向一个现有的副本集中添加 broker,broker 注册之后会直接变为 slave
             if (this.brokerControllerId.equals(masterBrokerId)) {
                 changeToMaster(response.getMasterEpoch(), response.getSyncStateSetEpoch(), syncStateSet);
             } else {
@@ -734,6 +753,7 @@ public class ReplicasManager {
                 LOGGER.warn("Error happen when get broker {}'s metadata", this.brokerConfig.getBrokerName(), exception);
                 if (exception.getResponseCode() == CONTROLLER_BROKER_METADATA_NOT_EXIST) {
                     try {
+                        // 获取 master 信息以及副本组的 SyncStateSet，从而决定 changeToMaster or changeToSlave
                         registerBrokerToController();
                         TimeUnit.SECONDS.sleep(2);
                     } catch (InterruptedException ignore) {
@@ -849,6 +869,7 @@ public class ReplicasManager {
         }
 
         for (String address : availableControllerAddresses.keySet()) {
+            // controllerAddresses 每隔 120s 会更新
             if (!controllerAddresses.contains(address)) {
                 LOGGER.warn("scanAvailableControllerAddresses remove invalid address {}", address);
                 availableControllerAddresses.remove(address);
@@ -856,6 +877,7 @@ public class ReplicasManager {
         }
 
         for (String address : controllerAddresses) {
+            // 4线程，max 10 线程, 32队列容量
             scanExecutor.submit(() -> {
                 if (brokerOuterAPI.checkAddressReachable(address)) {
                     availableControllerAddresses.putIfAbsent(address, true);
@@ -944,6 +966,10 @@ public class ReplicasManager {
     }
 
     public void setFenced(boolean fenced) {
+        // 在 broker 启动的时候会将 fenced 设置为 true ，设置一道屏障，使得 broker 处于孤立状态，不向 nameserver 注册
+        // see : org.apache.rocketmq.broker.BrokerController.recoverAndInitService
+        // 等到 broker 与 controller 交互选主成功之后，会将 fenced 设置为 false ,取消屏障。ha 相关组件全部拉起，主从身份已经确定，开始向 nameserver 注册
+        // see : org.apache.rocketmq.broker.controller.ReplicasManager.startBasicService
         this.brokerController.setIsolated(fenced);
         this.brokerController.getMessageStore().getRunningFlags().makeFenced(fenced);
     }

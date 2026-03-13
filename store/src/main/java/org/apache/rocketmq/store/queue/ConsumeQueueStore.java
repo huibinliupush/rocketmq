@@ -360,6 +360,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
 
     public void truncateDirtyLogicFiles(ConsumeQueueInterface consumeQueue, long phyOffset) {
         // 从 consumeQueueTable 中获取对应的 consumeQueue （不存在的话，则进行初始化）
+        // 获取 topic , queueId 对应的 ConsumeQueueInterface
         FileQueueLifeCycle fileQueueLifeCycle = getLifeCycle(consumeQueue.getTopic(), consumeQueue.getQueueId());
         // 从 consumer queue 中删除无效的消息索引（在 commit log 的 offset >= phyOffset）
         // 所谓删除就是重新调整 mappedFile 的相关 position 信息（类似 byte buffer 的相关指针操作）
@@ -411,6 +412,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
 
         Optional<TopicConfig> topicConfig = this.messageStore.getTopicConfig(topic);
         // TODO maybe the topic has been deleted.
+        // 队列类型 queue type 区分批量 BatchCQ 还是单个普通消息
         if (Objects.equals(CQType.BatchCQ, QueueTypeUtils.getCQType(topicConfig))) {
             newLogic = new BatchConsumeQueue(
                 topic,
@@ -422,8 +424,8 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
             newLogic = new ConsumeQueue(
                 topic,
                 queueId,
-                getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),
-                this.messageStoreConfig.getMappedFileSizeConsumeQueue(),
+                getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),// user.home/store/consumequeue
+                this.messageStoreConfig.getMappedFileSizeConsumeQueue(),// 600万字节
                 this.messageStore);
         }
 
@@ -582,6 +584,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
     @Override
     public void truncateDirty(long offsetToTruncate) {
         for (ConcurrentMap<Integer, ConsumeQueueInterface> maps : this.consumeQueueTable.values()) {
+            // 针对所有 topic 下的所有 queue
             for (ConsumeQueueInterface logic : maps.values()) {
                 // 一个队列一个队列的截断
                 this.truncateDirtyLogicFiles(logic, offsetToTruncate);

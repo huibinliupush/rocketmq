@@ -37,7 +37,7 @@ public class Configuration {
     private List<Object> configObjectList = new ArrayList<>(4);
     private String storePath;
     private boolean storePathFromConfig = false;
-    // ControllerConfig
+    // ControllerConfig or namesrvConfig
     private Object storePathObject;
     // org.apache.rocketmq.common.ControllerConfig.configStorePath
     private Field storePathField;
