@@ -32,15 +32,19 @@ public class NotifyMessageArrivingListener implements MessageArrivingListener {
         this.popMessageProcessor = popMessageProcessor;
         this.notificationProcessor = notificationProcessor;
     }
-
+    // logicOffset 为消息在对应 queueId 中的个数（并不是 bytes 单位），而是 queue 中的第几个消息
     @Override
     public void arriving(String topic, int queueId, long logicOffset, long tagsCode,
                          long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
-
+        // 通知 pullRequestHoldService 中正在等待 topic@queueId 消息的所有客户端 PullRequest
+        // 根据消费端指定的 PullRequest （PullFromThisOffset）进行触发
         this.pullRequestHoldService.notifyMessageArriving(
             topic, queueId, logicOffset, tagsCode, msgStoreTime, filterBitMap, properties);
+        // 通知 popLongPollingService 中正在等待 topic@consumeGroup@queueId 消息的所有客户端 PopRequest
+        // 只要 PopRequest 超时就触发，当然了前提都是消息到来的时候
         this.popMessageProcessor.notifyMessageArriving(
             topic, queueId, logicOffset, tagsCode, msgStoreTime, filterBitMap, properties);
+        // 逻辑同上
         this.notificationProcessor.notifyMessageArriving(
             topic, queueId, logicOffset, tagsCode, msgStoreTime, filterBitMap, properties);
     }

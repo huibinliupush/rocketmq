@@ -214,6 +214,7 @@ public class BrokerController {
     protected final RecallMessageProcessor recallMessageProcessor;
     protected final ReplyMessageProcessor replyMessageProcessor;
     protected final PullRequestHoldService pullRequestHoldService;
+    // NotifyMessageArrivingListener
     protected final MessageArrivingListener messageArrivingListener;
     protected final Broker2Client broker2Client;
     protected final ConsumerIdsChangeListener consumerIdsChangeListener;

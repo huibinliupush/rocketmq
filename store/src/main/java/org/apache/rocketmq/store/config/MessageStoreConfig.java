@@ -131,9 +131,9 @@ public class MessageStoreConfig {
     private int commitIntervalCommitLog = 200;
 
     private int maxRecoveryCommitlogFiles = 30;
-
+    // 区间限制在 [0.35,0.90]
     private int diskSpaceWarningLevelRatio = 90;
-
+    // 区间限制在 [0.30,0.85]
     private int diskSpaceCleanForciblyRatio = 85;
 
     /**
@@ -149,18 +149,40 @@ public class MessageStoreConfig {
     // Resource reclaim interval
     private int cleanResourceInterval = 10000;
     // CommitLog removal interval
+    // 控制物理文件删除频率的核心参数，用于在删除多个过期文件时加入间隔，避免因连续、密集的磁盘 IO 操作影响消息的读写性能
+    // 删除文件（尤其是通过 MappedFile.destroy 释放内存映射和物理文件）是一个相对耗时的 IO 操作。
+    // 如果一次性连续删除几十上百个文件而不加停顿，可能会瞬间占满磁盘 IO 资源，导致 Broker 在该时刻处理消息写入（putMessage）
+    // 或拉取（pullMessage）的延迟显著增加
+    /**
+     * 为什么删除文件会产生磁盘 IO
+     *   元数据必须持久化：为了保证文件系统一致性，删除操作最终必须把元数据变更同步到磁盘（例如 fsync 或内核后台回写）。
+     *
+     *   涉及多个磁盘位置：删除一个文件可能更新多个不同位置的磁盘块（目录块、inode、多个位图块、日志块），这些 IO 通常是随机写，对磁盘负载影响较大。
+     *
+     *   即使数据在 page cache 中，最终也要落盘：修改后的元数据页会被标记为脏页，由内核的 pdflush / flush 线程在适当时机写回磁盘。如果删除大量文件，脏页产生速度过快，可能导致回写压力骤增。
+     *   删除文件产生磁盘 IO 的核心原因，不是擦除数据，而是文件系统必须将元数据的变更（目录项、inode、位图等）持久化到磁盘。这些修改涉及随机写入，批量执行时负载很高。因此 RocketMQ 通过设置删除间隔来平滑这种 IO 负载，保障系统稳定性。
+     * */
     private int deleteCommitLogFilesInterval = 100;
     // ConsumeQueue removal interval
     private int deleteConsumeQueueFilesInterval = 100;
+    // 文件被引用时的最大保留时间。如果文件因被线程引用而无法立即删除，超过此时间后将强制清理
+    // 当第一次尝试删除一个mappedFile时，如果他的
+    // refCount>0，则只是标记available=false,停止删除
+    // 第二次尝试删除该文件时，如果记录第一次超过了
+    // 120s,则不管文件是否有引用都强制进行删除
     private int destroyMapedFileIntervalForcibly = 1000 * 120;
     private int redeleteHangedFileInterval = 1000 * 120;
-    // When to delete,default is at 4 am
+    // When to delete,default is at 4 am 。可指定多个，用 ; 分割
+    // 定时删除的时间点。只有到达这个时间点，才会触发常规的过期删除检查
     @ImportantField
     private String deleteWhen = "04";
+    // 磁盘空间水位线。当磁盘使用率超过该值时，即使未到 deleteWhen 时间点，也会触发删除以释放空间
     private int diskMaxUsedSpaceRatio = 75;
     // The number of hours to keep a log file before deleting it (in hours)
+    // 文件过期时间。文件最后修改时间超过此值，才具备被删除的资格
     @ImportantField
     private int fileReservedTime = 72;
+    // 为了防止一次定时任务占用过长时间，单次清理任务最多只处理 10个文件
     @ImportantField
     private int deleteFileBatchMax = 10;
     // Flow control for ConsumeQueue
@@ -396,7 +418,9 @@ public class MessageStoreConfig {
      * Number of matched records before starting to estimate.
      */
     private int sampleCountThreshold = 5000;
-
+    // 在一些业务场景中，存在一些消费者读取Broker中存储的历史消息，而读取这部分的历史数据，
+    // 往往需要消耗大量的磁盘IO，严重影响Broker的稳定性(包括 影响正常消息的写入、正常消息的读取)。
+    // 为了保护系统能够正常运行，决定对系统的冷数据读取速度进行控制，从而保证系统的稳定性。
     private boolean coldDataFlowControlEnable = false;
     private boolean coldDataScanEnable = false;
     private boolean dataReadAheadEnable = true; // 是否对文件进行预读

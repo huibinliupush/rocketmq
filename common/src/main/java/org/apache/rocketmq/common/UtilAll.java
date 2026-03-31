@@ -145,7 +145,7 @@ public class UtilAll {
     public static String timeMillisToHumanString(final long t) {
         Calendar cal = Calendar.getInstance();
         cal.setTimeInMillis(t);
-        return String.format("%04d%02d%02d%02d%02d%02d%03d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1,
+        return String.format("%04d%02d%02d%02d%02d%02d%03d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1,// 1月从0开始表示
             cal.get(Calendar.DAY_OF_MONTH), cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE), cal.get(Calendar.SECOND),
             cal.get(Calendar.MILLISECOND));
     }
@@ -245,7 +245,7 @@ public class UtilAll {
         File file = new File(path);
         return file.exists();
     }
-
+    // user.home/store/commitlog
     public static double getDiskPartitionSpaceUsedPercent(final String path) {
         if (null == path || path.isEmpty()) {
             STORE_LOG.error("Error when measuring disk space usage, path is null or empty, path : {}", path);
@@ -259,18 +259,31 @@ public class UtilAll {
                 STORE_LOG.error("Error when measuring disk space usage, file doesn't exist on this path: {}", path);
                 return -1;
             }
-
+            // 查询 path 所在文件系统分区总容量（所在磁盘分区的总容量）
+            // 用于获取指定路径对应的文件系统分区的总容量（即该分区总共的存储空间大小）。返回值：long 类型，表示该分区总空间大小，单位是字节。
+            // 异常：如果无法获取分区信息（例如路径不存在或权限不足），可能返回 0L，但不会抛出受检异常。
+            // 分区的总容量（等于磁盘或卷标的总大小）
+            // 路径可以是文件或目录，但查询的是该路径所在的文件系统分区，而不是文件本身的大小
+            // 如果路径不存在或程序无权限读取文件系统信息，返回值可能是 0L（具体取决于操作系统和 Java 实现）。
             long totalSpace = file.getTotalSpace();
 
             if (totalSpace > 0) {
-                long usedSpace = totalSpace - file.getFreeSpace();
-                long usableSpace = file.getUsableSpace();
+                long usedSpace = totalSpace - file.getFreeSpace();// FreeSpace:分区上未分配的空间（可能包含系统保留空间，不一定可写）
+                long usableSpace = file.getUsableSpace();// 分区上可用的空间（通常 ≤ getFreeSpace()，考虑了系统预留、配额等限制）
+                // 磁盘总共可用的容量
                 long entireSpace = usedSpace + usableSpace;
+                // 用于百分比的小数部分向上取整
                 long roundNum = 0;
+                // (usedSpace * 100) 除以 entireSpace 的余数
                 if (usedSpace * 100 % entireSpace != 0) {
+                    // 如果余数不为 0，说明百分比存在小数部分，需要向上取整，于是 roundNum 设为 1；否则为 0。
+                    // 比如 1 和 3 ，余数就不为0 ，计算出的百分比就是 33.33
+                    // roundNum 设置为 1 ，后面加上roundNum就是 34 ，返回 34%
                     roundNum = 1;
                 }
+                // 34
                 long result = usedSpace * 100 / entireSpace + roundNum;
+                // 0.34 -> 34%
                 return result / 100.0;
             }
         } catch (Exception e) {

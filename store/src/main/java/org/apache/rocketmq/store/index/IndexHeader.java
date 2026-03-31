@@ -41,15 +41,30 @@ public class IndexHeader {
     private static int endPhyoffsetIndex = 24;
     private static int hashSlotcountIndex = 32;
     private static int indexCountIndex = 36;
+    // indexFile 的 mappedByteBuffer
     private final ByteBuffer byteBuffer;
+    // IndexFile 中消息的最小存储时间，// 初始为上一个 indexFile 的 endTimestamp
+    // 添加第一个消息索引的时候更新 BeginPhyOffset，BeginTimestamp,后续不会更新
     private final AtomicLong beginTimestamp = new AtomicLong(0);
+    // IndexFile 中消息的最大存储时间，// 初始为上一个 indexFile 的 endTimestamp
+    // 添加完索引后更新
     private final AtomicLong endTimestamp = new AtomicLong(0);
+    // IndexFile 中消息在 CommitLog 中的最小物理偏移，初始为上一个 indexFile 的 endPhyOffset
+    // 添加第一个消息索引的时候更新 BeginPhyOffset，BeginTimestamp，后续不会更新
     private final AtomicLong beginPhyOffset = new AtomicLong(0);
+    // IndexFile 中消息在 CommitLog 中的最大物理偏移，初始为上一个 indexFile 的 endPhyOffset
+    // 添加完索引后更新
     private final AtomicLong endPhyOffset = new AtomicLong(0);
+    // IndexFile 中当前用到的哈希槽个数
     private final AtomicInteger hashSlotCount = new AtomicInteger(0);
+    // IndexFile 中目前保存的消息索引条数
+    // indexCount 包含空的尾结点在内，空的尾结点用于指示该索引时槽内的最后一个索引
+    // 该尾结点是所有槽内最后一个索引都会指向的节点（整个 indexFile就一个）
+    // 添加完消息后计数增加
     private final AtomicInteger indexCount = new AtomicInteger(1);
 
     public IndexHeader(final ByteBuffer byteBuffer) {
+        // indexFile 的 mappedByteBuffer
         this.byteBuffer = byteBuffer;
     }
 

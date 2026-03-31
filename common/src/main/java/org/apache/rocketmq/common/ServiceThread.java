@@ -31,6 +31,7 @@ public abstract class ServiceThread implements Runnable {
     protected Thread thread;
     protected final CountDownLatch2 waitPoint = new CountDownLatch2(1);
     // wakeup 设置为 true , wait 设置 false 并回调 onWaitEnd
+    // 唤醒的时候设置为 true, 唤醒之后设置为 false
     protected volatile AtomicBoolean hasNotified = new AtomicBoolean(false);
     protected volatile boolean stopped = false;
     protected boolean isDaemon = false;
@@ -100,13 +101,16 @@ public abstract class ServiceThread implements Runnable {
     }
 
     public void wakeup() {
+        // 唤醒的时候设置为 true, 唤醒之后设置为 false
         if (hasNotified.compareAndSet(false, true)) {
             waitPoint.countDown(); // notify
         }
     }
 
     protected void waitForRunning(long interval) {
+        // 别的线程刚好调用了 wakeup ， 正好不用 wait 了
         if (hasNotified.compareAndSet(true, false)) {
+            // 唤醒之后的回调
             this.onWaitEnd();
             return;
         }
@@ -119,7 +123,9 @@ public abstract class ServiceThread implements Runnable {
         } catch (InterruptedException e) {
             log.error("Interrupted", e);
         } finally {
+            // 唤醒的时候设置为 true, 唤醒之后设置为 false
             hasNotified.set(false);
+            // 线程被唤醒之后的回调
             this.onWaitEnd();
         }
     }

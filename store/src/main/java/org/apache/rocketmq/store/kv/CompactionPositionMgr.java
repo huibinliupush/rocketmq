@@ -25,8 +25,9 @@ import java.util.concurrent.ConcurrentHashMap;
 public class CompactionPositionMgr extends ConfigManager {
 
     public static final String CHECKPOINT_FILE = "position-checkpoint";
-
+    // user.home/store/compaction
     private transient String compactionPath;
+    // user.home/store/compaction/position-checkpoint
     private transient String checkpointFileName;
 
     private ConcurrentHashMap<String, Long> queueOffsetMap = new ConcurrentHashMap<>();
@@ -36,7 +37,9 @@ public class CompactionPositionMgr extends ConfigManager {
     }
 
     public CompactionPositionMgr(final String compactionPath) {
+        // user.home/store/compaction
         this.compactionPath = compactionPath;
+        // user.home/store/compaction/position-checkpoint
         this.checkpointFileName = compactionPath + File.separator + CHECKPOINT_FILE;
         this.load();
     }

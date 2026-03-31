@@ -33,8 +33,14 @@ public class StoreCheckpoint {
     private final RandomAccessFile randomAccessFile;
     private final FileChannel fileChannel;
     private final MappedByteBuffer mappedByteBuffer;
+    // 最后一个被 flush 的 message store timestamp
     private volatile long physicMsgTimestamp = 0;
+    // 存储最近一次 reput 到 consumequeue 的消息 storeTIme
     private volatile long logicsMsgTimestamp = 0;
+    // 每当新创建一个 indexFile 的时候，就会启动一个 flush 线程去 flush 前一个 indexFile
+    // org.apache.rocketmq.store.index.IndexService.flush
+    // flush 之后就会把前一个 indexFile 的 EndTimestamp 存储在这里,然后 StoreCheckpoint 文件 flush
+    // 最后一条 indexed 消息的 EndTimestamp
     private volatile long indexMsgTimestamp = 0;
     private volatile long masterFlushedOffset = 0;
     private volatile long confirmPhyOffset = 0;
@@ -50,8 +56,11 @@ public class StoreCheckpoint {
 
         if (fileExists) {
             log.info("store checkpoint file exists, " + scpPath);
+            // 最后一个被 flush 的 message store timestamp
             this.physicMsgTimestamp = this.mappedByteBuffer.getLong(0);
+            // 存储最近一次 reput 到 consumequeue 的消息 storeTIme
             this.logicsMsgTimestamp = this.mappedByteBuffer.getLong(8);
+            // 最后一条 indexed 消息的 EndTimestamp
             this.indexMsgTimestamp = this.mappedByteBuffer.getLong(16);
             this.masterFlushedOffset = this.mappedByteBuffer.getLong(24);
             this.confirmPhyOffset = this.mappedByteBuffer.getLong(32);
@@ -81,10 +90,16 @@ public class StoreCheckpoint {
             log.error("Failed to properly close the channel", e);
         }
     }
-
+    // see org.apache.rocketmq.store.index.IndexService.flush
     public void flush() {
+        // 最后一个被 flush 的 message store timestamp
         this.mappedByteBuffer.putLong(0, this.physicMsgTimestamp);
+        // 存储最近一次 reput 到 consumequeue 的消息 storeTIme
         this.mappedByteBuffer.putLong(8, this.logicsMsgTimestamp);
+        // 每当新创建一个 indexFile 的时候，就会启动一个 flush 线程去 flush 前一个 indexFile
+        // org.apache.rocketmq.store.index.IndexService.flush
+        // flush 之后就会把前一个 indexFile 的 EndTimestamp 存储在这里,然后 StoreCheckpoint 文件 flush
+        // 最后一条 indexed 消息的 EndTimestamp
         this.mappedByteBuffer.putLong(16, this.indexMsgTimestamp);
         this.mappedByteBuffer.putLong(24, this.masterFlushedOffset);
         this.mappedByteBuffer.putLong(32, this.confirmPhyOffset);

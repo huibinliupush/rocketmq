@@ -23,9 +23,10 @@ public class RunningFlags {
     private static final int NOT_WRITEABLE_BIT = 1 << 1;
 
     private static final int WRITE_LOGICS_QUEUE_ERROR_BIT = 1 << 2;
-
+    // indexFile 创建失败
+    // org.apache.rocketmq.store.index.IndexService.retryGetAndCreateIndexFile
     private static final int WRITE_INDEX_FILE_ERROR_BIT = 1 << 3;
-
+    // commitlog 文件分区使用率超过 90%， 标记 diskFull
     private static final int DISK_FULL_BIT = 1 << 4;
 
     private static final int FENCED_BIT = 1 << 5;
@@ -136,14 +137,17 @@ public class RunningFlags {
     }
 
     public boolean getAndMakeDiskFull() {
+        // commitlog 文件分区使用率超过 90%， 标记 diskFull
         boolean result = !((this.flagBits & DISK_FULL_BIT) == DISK_FULL_BIT);
         this.flagBits |= DISK_FULL_BIT;
+        // true : 之前不是满的， false : 之前就是满的
         return result;
     }
 
     public boolean getAndMakeDiskOK() {
         boolean result = !((this.flagBits & DISK_FULL_BIT) == DISK_FULL_BIT);
         this.flagBits &= ~DISK_FULL_BIT;
+        // true : 之前不是满的， false : 之前就是满的
         return result;
     }
 

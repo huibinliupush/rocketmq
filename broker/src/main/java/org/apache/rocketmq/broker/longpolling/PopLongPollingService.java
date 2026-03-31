@@ -51,22 +51,36 @@ public class PopLongPollingService extends ServiceThread {
     private static final Logger POP_LOGGER =
         LoggerFactory.getLogger(LoggerName.ROCKETMQ_POP_LOGGER_NAME);
     private final BrokerController brokerController;
+    // PopMessageProcessor
     private final NettyRequestProcessor processor;
+    // topic -> cid（consumerGroup） -> queueId
+    // queueId = -1 表示读取所有消费队列
+    // 主要用来分辨 topic 下有多少 consumerGroup ，pop模式下消费者可以消费所有队列，所以这里的 queueId 都是 -1
     private final ConcurrentLinkedHashMap<String, ConcurrentHashMap<String, Byte>> topicCidMap;
+    // key : topic@cid（consumerGroup）@queueId ， value 不能超过 1024 popPollingSize
+    // pop 模式下 queueId = -1 ，表示consumerGroup下的消费者可以消费所有队列
+    // 所以对应的 topic@consumeGroup@queueId 中存放的是同一consumeGroup下所有消费者的 PopRequest(consumeGroup下所有消费者均可以消费该队列)
     private final ConcurrentLinkedHashMap<String, ConcurrentSkipListSet<PopRequest>> pollingMap;
+    // 上一次执行 cleanUnusedResource 方法的时间戳
     private long lastCleanTime = 0;
-
+    // 当前所有队列中正在 polling 的 popRequest(还未处理)
+    // popRequest timeout 了会由 run 方法执行，随后 totalPollingNum - 1
+    // 不能超过 maxPopPollingSize = 100000
     private final AtomicLong totalPollingNum = new AtomicLong(0);
+    // 从 pollingMap 中 poll 第一个还是最后一个 PopRequest
     private final boolean notifyLast;
 
     public PopLongPollingService(BrokerController brokerController, NettyRequestProcessor processor, boolean notifyLast) {
         this.brokerController = brokerController;
+        // PopMessageProcessor
         this.processor = processor;
-        // 100000 topic default,  100000 lru topic + cid + qid
+        // 100000 topic default,  100000 lru topic + cid（consumerGroup） + qid(queueId)
+        // popPollingMapSize = 100000
         this.topicCidMap = new ConcurrentLinkedHashMap.Builder<String, ConcurrentHashMap<String, Byte>>()
             .maximumWeightedCapacity(this.brokerController.getBrokerConfig().getPopPollingMapSize() * 2L).build();
         this.pollingMap = new ConcurrentLinkedHashMap.Builder<String, ConcurrentSkipListSet<PopRequest>>()
             .maximumWeightedCapacity(this.brokerController.getBrokerConfig().getPopPollingMapSize()).build();
+        // false
         this.notifyLast = notifyLast;
     }
 
@@ -78,6 +92,29 @@ public class PopLongPollingService extends ServiceThread {
         return PopLongPollingService.class.getSimpleName();
     }
 
+    /**
+     * run 方法被动处理过期的 popRequest
+     * 首先消费者组的消费者都可以消费所有队列，每个队列中的消息都会均匀的平摊给每个消费者组中的所有消费者
+     * 所有消费者组中的所有消费者发起 popRequest, 这里会按照 topic@consumeGroup@queueId 的维度将对应的 popRequest 组织在 pollingMap 中
+     * 这里的 run 方法会每隔 20ms 去拉取 pollingMap 中的每个 ConcurrentSkipListSet（topic@cid@queueId 维度）
+     * 将其中的  timeout popRequest 重新触发 PopMessageProcessor.processRequest
+     * 这样一来，同一个 cid(consumerGroup) 也就是同一个消费者就可以消费所有队列了
+     *
+     * pop 模式下 queueId = -1 ，表示consumerGroup下的消费者可以消费所有队列
+     * 所以对应的 topic@consumeGroup@queueId 中存放的是同一consumeGroup下所有消费者的 PopRequest(consumeGroup下所有消费者均可以消费该队列)
+     * 执行每个 consumeGroup下过期的 PopRequest ，只要遇到没有过期的就跳出循环，继续处理下一个 consumeGroup 下的所有 PopRequest
+     *
+     * 而 pullRequestHoldService 还是需要消费者绑定队列，所以它里面的组织结构是 topic@queueId 中存放的是不同 consumequeue 下所有
+     * 绑定该 queue 的消费者 PullRequest （只有绑定到该队列的消费者才可以消费，但不区分consumeGroup）
+     *
+     * notifyMessageArriving --> pop 消费逻辑的精髓就在这里
+     *
+     * 每次消息到来，只会通知 consumeGroup 下的一个消费者 PopRequest(不是所有)
+     * 第二个消息到来，继续通知下一个消费者 PopRequest
+     * 这样 consumeGroup 下的所有消费者就能均匀的平摊所有队列中的消息了
+     *
+     * org.apache.rocketmq.broker.longpolling.PopLongPollingService#notifyMessageArriving(java.lang.String, int, java.lang.String, boolean, java.lang.Long, long, byte[], java.util.Map, org.apache.rocketmq.remoting.CommandCallback)
+     * */
     @Override
     public void run() {
         int i = 0;
@@ -88,20 +125,26 @@ public class PopLongPollingService extends ServiceThread {
                 if (pollingMap.isEmpty()) {
                     continue;
                 }
+                // 重新统计 TotalPollingNum
                 long tmpTotalPollingNum = 0;
+                // 挨个获取所有consumeGroup中的 PopRequest
+                // key : topic@cid@queueId
                 for (Map.Entry<String, ConcurrentSkipListSet<PopRequest>> entry : pollingMap.entrySet()) {
                     String key = entry.getKey();
+                    // 某个 consumeGroup 下的所有 PopRequest(来自不同的消费者)
                     ConcurrentSkipListSet<PopRequest> popQ = entry.getValue();
                     if (popQ == null) {
                         continue;
                     }
                     PopRequest first;
+                    // 执行过期的 PopRequest ，只要遇到没有过期的就跳出循环，继续处理下一个 consumeGroup 下的所有 PopRequest
                     do {
                         first = popQ.pollFirst();
                         if (first == null) {
                             break;
                         }
                         if (!first.isTimeout()) {
+                            // PopRequest 没有 time out 则不执行，跳出执行 do while 循环,继续处理下一个 queue 上的 pop request
                             if (popQ.add(first)) {
                                 break;
                             } else {
@@ -111,36 +154,43 @@ public class PopLongPollingService extends ServiceThread {
                         if (brokerController.getBrokerConfig().isEnablePopLog()) {
                             POP_LOGGER.info("timeout , wakeUp polling : {}", first);
                         }
+                        // PopRequest time out 了才会去执行
                         totalPollingNum.decrementAndGet();
+                        // 重新触发 PopMessageProcessor.processRequest
                         wakeUp(first);
                     }
                     while (true);
+                    // 到这里该 queue 对应的 PopRequest 到期的就都执行了
+                    // 现在 popQ 中存留的 PopRequest 就是还未 timeout 正在 polling 的请求
                     if (i >= 100) {
                         long tmpPollingNum = popQ.size();
+                        // 更新 TotalPollingNum
                         tmpTotalPollingNum = tmpTotalPollingNum + tmpPollingNum;
                         if (tmpPollingNum > 100) {
                             POP_LOGGER.info("polling queue {} , size={} ", key, tmpPollingNum);
                         }
                     }
                 }
-
+                // 到这里所有 queue 对应的 popRequst 该处理的就全处理完了
                 if (i >= 100) {
                     POP_LOGGER.info("pollingMapSize={},tmpTotalSize={},atomicTotalSize={},diffSize={}",
                         pollingMap.size(), tmpTotalPollingNum, totalPollingNum.get(),
                         Math.abs(totalPollingNum.get() - tmpTotalPollingNum));
+                    // 更新 TotalPollingNum
                     totalPollingNum.set(tmpTotalPollingNum);
                     i = 0;
                 }
 
-                // clean unused
+                // clean unused 每隔 5 分钟
                 if (lastCleanTime == 0 || System.currentTimeMillis() - lastCleanTime > 5 * 60 * 1000) {
+                    // 从 topicCidMap 中清除不存在 topic 以及不存在的 consumeGroup
                     cleanUnusedResource();
                 }
             } catch (Throwable e) {
                 POP_LOGGER.error("checkPolling error", e);
             }
         }
-        // clean all;
+        // stopped = true clean all;
         try {
             for (Map.Entry<String, ConcurrentSkipListSet<PopRequest>> entry : pollingMap.entrySet()) {
                 ConcurrentSkipListSet<PopRequest> popQ = entry.getValue();
@@ -156,28 +206,35 @@ public class PopLongPollingService extends ServiceThread {
     public void notifyMessageArrivingWithRetryTopic(final String topic, final int queueId) {
         this.notifyMessageArrivingWithRetryTopic(topic, queueId, -1L, null, 0L, null, null);
     }
-
+    // offset 为消息在对应 queueId 中的个数（并不是 bytes 单位），而是 queue 中的第几个消息
     public void notifyMessageArrivingWithRetryTopic(final String topic, final int queueId, long offset,
         Long tagsCode, long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
         String notifyTopic;
         if (KeyBuilder.isPopRetryTopicV2(topic)) {
+            // 从 RetryTopic 中提取 NormalTopic
             notifyTopic = KeyBuilder.parseNormalTopic(topic);
         } else {
             notifyTopic = topic;
         }
         notifyMessageArriving(notifyTopic, queueId, offset, tagsCode, msgStoreTime, filterBitMap, properties);
     }
-
+    // offset 为消息在对应 queueId 中的个数（并不是 bytes 单位），而是 queue 中的第几个消息
     public void notifyMessageArriving(final String topic, final int queueId, long offset,
         Long tagsCode, long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
+        // 所有 consumeGroup -> queueId
+        // 获取 topic 下所有的 consumeGroup
         ConcurrentHashMap<String, Byte> cids = topicCidMap.get(topic);
         if (cids == null) {
             return;
         }
+        // 800
         long interval = brokerController.getBrokerConfig().getPopLongPollingForceNotifyInterval();
+        // 每 800 个消息 force 一下
         boolean force = interval > 0L && offset % interval == 0L;
+        // 遍历所有 consumeGroup
         for (Map.Entry<String, Byte> cid : cids.entrySet()) {
             if (queueId >= 0) {
+                // queueId = -1 表示读取所有消费队列
                 notifyMessageArriving(topic, -1, cid.getKey(), force, tagsCode, msgStoreTime, filterBitMap, properties);
             }
             notifyMessageArriving(topic, queueId, cid.getKey(), force, tagsCode, msgStoreTime, filterBitMap, properties);
@@ -196,16 +253,21 @@ public class PopLongPollingService extends ServiceThread {
 
     public boolean notifyMessageArriving(final String topic, final int queueId, final String cid, boolean force,
         Long tagsCode, long msgStoreTime, byte[] filterBitMap, Map<String, String> properties, CommandCallback callback) {
+        // topic@cid@queueId
+        // queueId = -1 表示读取所有消费队列
         ConcurrentSkipListSet<PopRequest> remotingCommands = pollingMap.get(KeyBuilder.buildPollingKey(topic, cid, queueId));
         if (remotingCommands == null || remotingCommands.isEmpty()) {
             return false;
         }
-
+        // 取出一个 PopRequest，前提是 popRequest.getChannel().isActive
+        // 消息到来，只会通知 consumeGroup 下的一个消费者 PopRequest(不是所有)
+        // 第二个消息到来，继续通知下一个消费者 PopRequest
+        // 这样 consumeGroup 下的所有消费者就能均匀的平摊所有队列中的消息了
         PopRequest popRequest = pollRemotingCommands(remotingCommands);
         if (popRequest == null) {
             return false;
         }
-
+        // 每 800 个消息 force 一下
         if (!force && popRequest.getMessageFilter() != null && popRequest.getSubscriptionData() != null) {
             boolean match = popRequest.getMessageFilter().isMatchedByConsumeQueue(tagsCode,
                 new ConsumeQueueExt.CqExtUnit(tagsCode, msgStoreTime, filterBitMap));
@@ -213,16 +275,20 @@ public class PopLongPollingService extends ServiceThread {
                 match = popRequest.getMessageFilter().isMatchedByCommitLog(null, properties);
             }
             if (!match) {
+                // 通知的消息与 pop 请求不匹配，则重新添加回去，继续 long polling
                 remotingCommands.add(popRequest);
                 totalPollingNum.incrementAndGet();
                 return false;
             }
         }
-
+        // false
         if (brokerController.getBrokerConfig().isEnablePopLog()) {
             POP_LOGGER.info("lock release, new msg arrive, wakeUp: {}", popRequest);
         }
-
+        // 重新触发 PopMessageProcessor.processRequest
+        // 消息到来，只会通知 consumeGroup 下的一个消费者 PopRequest(不是所有)
+        // 第二个消息到来，继续通知下一个消费者 PopRequest
+        // 这样 consumeGroup 下的所有消费者就能均匀的平摊所有队列中的消息了
         return wakeUp(popRequest, callback);
     }
 
@@ -297,6 +363,7 @@ public class PopLongPollingService extends ServiceThread {
         cids.putIfAbsent(requestHeader.getConsumerGroup(), Byte.MIN_VALUE);
         long expired = requestHeader.getBornTime() + requestHeader.getPollTime();
         final PopRequest request = new PopRequest(remotingCommand, ctx, expired, subscriptionData, messageFilter);
+        // maxPopPollingSize = 100000
         boolean isFull = totalPollingNum.get() >= this.brokerController.getBrokerConfig().getMaxPopPollingSize();
         if (isFull) {
             POP_LOGGER.info("polling {}, result POLLING_FULL, total:{}", remotingCommand, totalPollingNum.get());
@@ -321,6 +388,7 @@ public class PopLongPollingService extends ServiceThread {
         } else {
             // check size
             int size = queue.size();
+            // 不能超过 1024
             if (size > brokerController.getBrokerConfig().getPopPollingSize()) {
                 POP_LOGGER.info("polling {}, result POLLING_FULL, singleSize:{}", remotingCommand, size);
                 return POLLING_FULL;
@@ -342,7 +410,7 @@ public class PopLongPollingService extends ServiceThread {
     public ConcurrentLinkedHashMap<String, ConcurrentSkipListSet<PopRequest>> getPollingMap() {
         return pollingMap;
     }
-
+    // 从 topicCidMap 中清除不存在 topic 以及不存在的 consumeGroup
     private void cleanUnusedResource() {
         try {
             {

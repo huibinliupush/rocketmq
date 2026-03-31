@@ -568,7 +568,7 @@ public class AutoSwitchHAService extends DefaultHAService {
                 int readSize = 0;
                 while (readSize < result.getSize()) {
                     // 校验 buffer 中未 reput 的消息内容
-                    // 这里会检验一条消息，在整个 while 循环中会一条一条消息的校验，直到找到不完整的消息（也就是从这条不完整的消息处开始阶段）
+                    // 这里会检验一条消息，在整个 while 循环中会一条一条消息的校验，直到找到不完整的消息（也就是从这条不完整的消息处开始截断）
                     DispatchRequest dispatchRequest = this.defaultMessageStore.getCommitLog().checkMessageAndReturnSize(result.getByteBuffer(), false, false);
                     if (dispatchRequest.isSuccess()) { // 完整的消息，继续向后校验
                         // 完整的消息 size

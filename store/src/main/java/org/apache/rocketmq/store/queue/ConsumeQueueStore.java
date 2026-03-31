@@ -204,29 +204,37 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
     }
 
     private boolean loadConsumeQueues(String storePath, CQType cqType) {
+        // storePath = storePath/consumerqueues
         File dirLogic = new File(storePath);
-        // consumerqueues 目录下所有的文件
+        // 获取 consumerqueues 目录下所有 topic 目录
+        // 这里获取到的 fileTopicList 均为 topic 目录
         File[] fileTopicList = dirLogic.listFiles();
         if (fileTopicList != null) {
-
+            // 构建该 topic 下的所有 consumequeues
             for (File fileTopic : fileTopicList) {
-                // storePath/consumerqueues/topic/queueid
+                // This is just the last name in the pathname's name sequence
+                // 获取 topic
                 String topic = fileTopic.getName();
-
+                // storePath/consumerqueues/topic/queueid
+                // 这里获取到的全都都是该 topic 下的所有 queueid 目录
                 File[] fileQueueIdList = fileTopic.listFiles();
                 if (fileQueueIdList != null) {
                     for (File fileQueueId : fileQueueIdList) {
                         int queueId;
                         try {
+                            // This is just the last name in the pathname's name sequence
+                            // 获取 queueId
                             queueId = Integer.parseInt(fileQueueId.getName());
                         } catch (NumberFormatException e) {
                             continue;
                         }
-
+                        // 查询 topicConfig，查看 topic 对应的 cqType 是否与指定的一致
                         queueTypeShouldBe(topic, cqType);
-
+                        // 创建对应的 consume queue
                         ConsumeQueueInterface logic = createConsumeQueueByType(cqType, topic, queueId, storePath);
+                        // 添加到 consumeQueueTable
                         this.putConsumeQueue(topic, queueId, logic);
+                        // 从 storePath/consumerqueues/topic/queueid 加载 consume queue 文件
                         if (!this.load(logic)) {
                             return false;
                         }
@@ -330,10 +338,13 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
             }
         }
     }
-
+    // 如果 file 写满了，则立即无条件 flush
+    // flushLeastPages = 0 , 则只要是 writePosition > flushPosition 就立即 flush
+    // flushLeastPages > 0 ，则需要保证在 page cache 中积累的未 flush 的数据达到 flushLeastPages * 4K 才可能 flush
     @Override
     public boolean flush(ConsumeQueueInterface consumeQueue, int flushLeastPages) {
         FileQueueLifeCycle fileQueueLifeCycle = getLifeCycle(consumeQueue.getTopic(), consumeQueue.getQueueId());
+        // 只 flush FlushedWhere 所在的 mappedFile
         return fileQueueLifeCycle.flush(flushLeastPages);
     }
 
@@ -392,8 +403,10 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
 
     @Override
     public ConsumeQueueInterface findOrCreateConsumeQueue(String topic, int queueId) {
+        // 获取 topic 下的所有 consume queue
         ConcurrentMap<Integer, ConsumeQueueInterface> map = consumeQueueTable.get(topic);
         if (null == map) {
+            // 并发写入 ConcurrentMap 技巧
             ConcurrentMap<Integer, ConsumeQueueInterface> newMap = new ConcurrentHashMap<>(128);
             ConcurrentMap<Integer, ConsumeQueueInterface> oldMap = consumeQueueTable.putIfAbsent(topic, newMap);
             if (oldMap != null) {
@@ -402,7 +415,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
                 map = newMap;
             }
         }
-
+        // 获取指定 consume queue
         ConsumeQueueInterface logic = map.get(queueId);
         if (logic != null) {
             return logic;
@@ -413,19 +426,20 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
         Optional<TopicConfig> topicConfig = this.messageStore.getTopicConfig(topic);
         // TODO maybe the topic has been deleted.
         // 队列类型 queue type 区分批量 BatchCQ 还是单个普通消息
+        // queue type 存放在 topicConfig 的 TopicAttributes 中，key 为 QUEUE_TYPE_ATTRIBUTE
         if (Objects.equals(CQType.BatchCQ, QueueTypeUtils.getCQType(topicConfig))) {
             newLogic = new BatchConsumeQueue(
                 topic,
                 queueId,
-                getStorePathBatchConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),
-                this.messageStoreConfig.getMapperFileSizeBatchConsumeQueue(),
+                getStorePathBatchConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),// user.home/store/batchconsumequeue
+                this.messageStoreConfig.getMapperFileSizeBatchConsumeQueue(),// 单个索引 46 ， 可存储 300000 个
                 this.messageStore);
         } else {
             newLogic = new ConsumeQueue(
                 topic,
                 queueId,
                 getStorePathConsumeQueue(this.messageStoreConfig.getStorePathRootDir()),// user.home/store/consumequeue
-                this.messageStoreConfig.getMappedFileSizeConsumeQueue(),// 600万字节
+                this.messageStoreConfig.getMappedFileSizeConsumeQueue(),// 600万字节 ，单个索引 20 ， 可存储 300000 个
                 this.messageStore);
         }
 

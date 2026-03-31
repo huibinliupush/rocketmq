@@ -81,15 +81,23 @@ public class DefaultMappedFile extends AbstractMappedFile {
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
+     * 当整个 mappedFile 文件中的数据全部写满，并且全部 commit 之后，会将该 writeBuffer return 回 transientStorePool
+     * 然后 writeBuffer 设置为 null
+     *
+     * writeBuffer 和 mappedFile 是一一对应的关系，大小一致都是 1G ， 里面的数据也是全部一样的
+     * mappedFile 写满了也全 commit 了，那自然 writeBuffer 也就没用了该归还了
      */
     protected ByteBuffer writeBuffer = null;
     protected TransientStorePool transientStorePool = null;
+    // file path, file.getPath()
     protected String fileName;
     // consumer queue 中保存的最小 offset (global offset)，单位字节 ,也就是文件名
     protected long fileFromOffset;
     protected File file;
     protected MappedByteBuffer mappedByteBuffer;
+    // store timestamp of the last message.
     protected volatile long storeTimestamp = 0;
+    // 是否为 commitlog 或者 consume queue 中的第一个 mappedFile
     protected boolean firstCreateInQueue = false;
     private long lastFlushTime = -1L;
 
@@ -156,9 +164,11 @@ public class DefaultMappedFile extends AbstractMappedFile {
     }
 
     private void init(final String fileName, final int fileSize) throws IOException {
+        // file path, file.getPath()
         this.fileName = fileName;
         this.fileSize = fileSize;
         this.file = new File(fileName);
+        // 文件名
         this.fileFromOffset = Long.parseLong(this.file.getName());
         boolean ok = false;
 
@@ -381,14 +391,19 @@ public class DefaultMappedFile extends AbstractMappedFile {
      */
     @Override
     public int flush(final int flushLeastPages) {
+        // 如果 file 写满了，则立即无条件 flush
+        // flushLeastPages = 0 , 则只要是 writePosition > flushPosition 就立即 flush
+        // flushLeastPages > 0 ，则需要保证在 page cache 中积累的未 flush 的数据达到 flushLeastPages * 4K 才可能 flush
         if (this.isAbleToFlush(flushLeastPages)) {
             if (this.hold()) {
+                // COMMITTED_POSITION 已经提交到 page cache 中的位置
                 int value = getReadPosition();
 
                 try {
                     this.mappedByteBufferAccessCountSinceLastSwap++;
 
                     //We only append data to fileChannel or mappedByteBuffer, never both.
+                    // 对于 consume queue 来说 transientStorePool = null
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
                         this.fileChannel.force(false);
                     } else {
@@ -420,7 +435,14 @@ public class DefaultMappedFile extends AbstractMappedFile {
         if (transientStorePool != null && !transientStorePool.isRealCommit()) {
             COMMITTED_POSITION_UPDATER.set(this, WROTE_POSITION_UPDATER.get(this));
         } else if (this.isAbleToCommit(commitLeastPages)) {
+            // 如果 file 写满了，则立即无条件 commit
+            // commitLeastPages = 0 , 则只要是 writePosition > commitPosition 就立即 commit
+            // commitLeastPages > 0 ，则需要保证在 transientStorePool 中积累的未 commit 的数据达到 commitLeastPages * 4K 才可能 commit
             if (this.hold()) {
+                // writeBuffer 也是 1G ，其中的数据是与 mappedFile 一致的
+                // 每次是从 writeBuffer 的 COMMITTED_POSITION_UPDATER 位置开始到 writePos
+                // 将 writeBuffer 中的这段数据 commit 到 page cache 的对应位置
+                // commit 之后的数据仍然会停留在 writeBuffer 中，下次想 writeBuffer 写入继续从 writePos 开始
                 commit0();
                 this.release();
             } else {
@@ -429,6 +451,9 @@ public class DefaultMappedFile extends AbstractMappedFile {
         }
 
         // All dirty data has been committed to FileChannel.
+        // 整个 mappedFile 文件中的数据全部写满，并且全部 commit 之后，returnBuffer
+        // writeBuffer 和 mappedFile 是一一对应的关系，大小一致都是 1G ， 里面的数据也是全部一样的
+        // mappedFile 写满了也全 commit 了，那自然 writeBuffer 也就没用了该归还了
         if (writeBuffer != null && this.transientStorePool != null && this.fileSize == COMMITTED_POSITION_UPDATER.get(this)) {
             this.transientStorePool.returnBuffer(writeBuffer);
             this.writeBuffer = null;
@@ -443,6 +468,10 @@ public class DefaultMappedFile extends AbstractMappedFile {
 
         if (writePos - lastCommittedPosition > 0) {
             try {
+                // writeBuffer 也是 1G ，其中的数据是与 mappedFile 一致的
+                // 每次是从 writeBuffer 的 COMMITTED_POSITION_UPDATER 位置开始到 writePos
+                // 将 writeBuffer 中的这段数据 commit 到 page cache 的对应位置
+                // commit 之后的数据仍然会停留在 writeBuffer 中，下次想 writeBuffer 写入继续从 writePos 开始
                 ByteBuffer byteBuffer = writeBuffer.slice();
                 byteBuffer.position(lastCommittedPosition);
                 byteBuffer.limit(writePos);
@@ -454,7 +483,9 @@ public class DefaultMappedFile extends AbstractMappedFile {
             }
         }
     }
-
+    // 如果 file 写满了，则立即无条件 flush
+    // flushLeastPages = 0 , 则只要是 writePosition > flushPosition 就立即 flush
+    // flushLeastPages > 0 ，则需要保证在 page cache 中积累的未 flush 的数据达到 flushLeastPages * 4K 才可能 flush
     private boolean isAbleToFlush(final int flushLeastPages) {
         int flush = FLUSHED_POSITION_UPDATER.get(this);
         int write = getReadPosition();
@@ -466,10 +497,12 @@ public class DefaultMappedFile extends AbstractMappedFile {
         if (flushLeastPages > 0) {
             return ((write / OS_PAGE_SIZE) - (flush / OS_PAGE_SIZE)) >= flushLeastPages;
         }
-
+        // 有脏页
         return write > flush;
     }
-
+    // 如果 file 写满了，则立即无条件 commit
+    // commitLeastPages = 0 , 则只要是 writePosition > commitPosition 就立即 commit
+    // commitLeastPages > 0 ，则需要保证在 transientStorePool 中积累的未 commit 的数据达到 commitLeastPages * 4K 才可能 commit
     protected boolean isAbleToCommit(final int commitLeastPages) {
         int commit = COMMITTED_POSITION_UPDATER.get(this);
         int write = WROTE_POSITION_UPDATER.get(this);
@@ -556,7 +589,7 @@ public class DefaultMappedFile extends AbstractMappedFile {
                 + " have cleanup, do not do it again.");
             return true;
         }
-
+        // unmap
         UtilAll.cleanBuffer(this.mappedByteBuffer);
         UtilAll.cleanBuffer(this.mappedByteBufferWaitToClean);
         this.mappedByteBufferWaitToClean = null;
@@ -565,11 +598,21 @@ public class DefaultMappedFile extends AbstractMappedFile {
         log.info("unmap file[REF:" + currentRef + "] " + this.fileName + " OK");
         return true;
     }
-
+    // intervalForcibly = destroyMapedFileIntervalForcibly = 1000 * 120
+    // 距离第一次 shutdown 超过 120s ，refCount 还不是 0 ，那么就强制 shutdown
+    // 返回值 true 表示文件已经销毁，mappedByteBuffer(unmap),fileChannel.close,file.delete
+    // 返回 false, 表示第一次 shutdown 的时候 refCount > 0 ,或者距离第一次 destroyMapedFileIntervalForcibly(120s) 之内即使 refCount > 0
+    // 但超过 120s 就会强制 destroy
+    // consume queue 是 60s , indexFile 是 3s
     @Override
     public boolean destroy(final long intervalForcibly) {
+        // 第一次 shutdown,refCount 减 1， 如果 refCount 不为 0， 则停止 cleanup
+        // 第二次 shutdown 的时候如果发现超过 120s 还未 refCount = 0，那么就强制 cleanup
         this.shutdown(intervalForcibly);
-
+        // 第一次 shutdown,refCount 减 1， 如果 refCount 不为 0, cleanupOver = false
+        // 再次执行 shutdown 如果未超过 120s , 但是 refCount 还是不为 0 ，那么也不能删除，等待 mappedFile 被其他线程执行 release
+        // 其他线程在执行 release 的时候，如果发现 isAvailable = false，就进行 cleanup, 此时 isCleanupOver = true
+        // 当 120s 之后再次执行 reDeleteHangedFile 的时候，mappedFile 就会被真正的删除（这就是 HangedFile 的意思）
         if (this.isCleanupOver()) {
             try {
                 long lastModified = getLastModifiedTimestamp();

@@ -32,7 +32,7 @@ public class PopRequest {
     private final ChannelHandlerContext ctx;
     private final AtomicBoolean complete = new AtomicBoolean(false);
     private final long op = COUNTER.getAndIncrement();
-
+    // requestHeader.getBornTime() + requestHeader.getPollTime()
     private final long expired;
     private final SubscriptionData subscriptionData;
     private final MessageFilter messageFilter;
@@ -42,6 +42,7 @@ public class PopRequest {
 
         this.ctx = ctx;
         this.remotingCommand = remotingCommand;
+        // requestHeader.getBornTime() + requestHeader.getPollTime()
         this.expired = expired;
         this.subscriptionData = subscriptionData;
         this.messageFilter = messageFilter;

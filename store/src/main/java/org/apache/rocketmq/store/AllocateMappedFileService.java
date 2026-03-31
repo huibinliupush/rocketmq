@@ -39,8 +39,12 @@ import org.apache.rocketmq.store.logfile.MappedFile;
 public class AllocateMappedFileService extends ServiceThread {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static int waitTimeOut = 1000 * 5;
+    // filepath 到 AllocateRequest 之间的映射
     private ConcurrentMap<String, AllocateRequest> requestTable =
         new ConcurrentHashMap<>();
+    // 先比较要创建的 fileSize , fileSize 越小排在前面， consumequeue(5.76M,600万字节,indexFile(400M),commitlog(1G)
+    // fileSize 相同则看文件名 对于 commitlog , consume queue 来说文件名为 offset，对于 indexFile 来说文件名为创建文件的时间戳
+    // 对 AllocateRequest 进行优先级排序
     private PriorityBlockingQueue<AllocateRequest> requestQueue =
         new PriorityBlockingQueue<>();
     private volatile boolean hasException = false;
@@ -52,11 +56,17 @@ public class AllocateMappedFileService extends ServiceThread {
 
     public MappedFile putRequestAndReturnMappedFile(String nextFilePath, String nextNextFilePath, int fileSize) {
         // 这里设置 2 的原因是，我们要分别创建两个 mappedFile : nextFile 和 nextNextFile
+        // 如果开启 TransientStorePool，那么每一个 File 都需要一个 DirectByteBuffer
+        // TransientStorePoolEnable 的话就需要在创建 File 的时候检查是否有足够的 DirectByteBuffer
+        // 不开启则默认为 2 ，也就是需要创建的文件数，因为不需要 DirectByteBuffer 做读写分离
         int canSubmitRequests = 2;
         if (this.messageStore.isTransientStorePoolEnable()) {
             if (this.messageStore.getMessageStoreConfig().isFastFailIfNoBufferInStorePool()
-                && BrokerRole.SLAVE != this.messageStore.getMessageStoreConfig().getBrokerRole()) { //if broker is slave, don't fast fail even no buffer in pool
+                && BrokerRole.SLAVE != this.messageStore.getMessageStoreConfig().getBrokerRole()) {
                 // master broker 才可以 fast fail
+                // if broker is slave, don't fast fail even no buffer in pool
+                // TransientStorePool 中现在还剩多少个 DirectByteBuffer(mlock) - 即将需要的 DirectByteBuffer
+                // 表示剩余可用的 DirectByteBuffer
                 canSubmitRequests = this.messageStore.remainTransientStoreBufferNumbs() - this.requestQueue.size();
             }
         }
@@ -102,6 +112,7 @@ public class AllocateMappedFileService extends ServiceThread {
         try {
             if (result != null) {
                 messageStore.getPerfCounter().startTick("WAIT_MAPFILE_TIME_MS");
+                // 等待 5s , 后台线程异步创建 mappedFile
                 boolean waitOK = result.getCountDownLatch().await(waitTimeOut, TimeUnit.MILLISECONDS);
                 messageStore.getPerfCounter().endTick("WAIT_MAPFILE_TIME_MS");
                 if (!waitOK) {
@@ -157,6 +168,7 @@ public class AllocateMappedFileService extends ServiceThread {
         boolean isSuccess = false;
         AllocateRequest req = null;
         try {
+            // 获取创建文件的请求
             req = this.requestQueue.take();
             AllocateRequest expectedRequest = this.requestTable.get(req.getFilePath());
             if (null == expectedRequest) {
@@ -169,7 +181,7 @@ public class AllocateMappedFileService extends ServiceThread {
                     + req.getFileSize() + ", req:" + req + ", expectedRequest:" + expectedRequest);
                 return true;
             }
-
+            // 文件还未创建
             if (req.getMappedFile() == null) {
                 long beginTime = System.currentTimeMillis();
 
@@ -188,6 +200,7 @@ public class AllocateMappedFileService extends ServiceThread {
 
                 long elapsedTime = UtilAll.computeElapsedTimeMilliseconds(beginTime);
                 if (elapsedTime > 10) {
+                    // 还有多少未创建的文件
                     int queueSize = this.requestQueue.size();
                     log.warn("create mappedFile spent time(ms) " + elapsedTime + " queue size " + queueSize
                         + " " + req.getFilePath() + " " + req.getFileSize());
@@ -270,7 +283,7 @@ public class AllocateMappedFileService extends ServiceThread {
         public void setMappedFile(MappedFile mappedFile) {
             this.mappedFile = mappedFile;
         }
-
+        // 先看 fileSize ,在看文件名
         public int compareTo(AllocateRequest other) {
             if (this.fileSize < other.fileSize)
                 return 1;
@@ -278,6 +291,8 @@ public class AllocateMappedFileService extends ServiceThread {
                 return -1;
             } else {
                 int mIndex = this.filePath.lastIndexOf(File.separator);
+                // 对于 commitlog , consume queue 来说文件名为 offset
+                // 对于 indexFile 来说文件名为创建文件的时间戳
                 long mName = Long.parseLong(this.filePath.substring(mIndex + 1));
                 int oIndex = other.filePath.lastIndexOf(File.separator);
                 long oName = Long.parseLong(other.filePath.substring(oIndex + 1));

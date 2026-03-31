@@ -48,17 +48,24 @@ public class CompactionStore {
     public static final String COMPACTION_DIR = "compaction";
     public static final String COMPACTION_LOG_DIR = "compactionLog";
     public static final String COMPACTION_CQ_DIR = "compactionCq";
-
+    // user.home/store/compaction
     private final String compactionPath;
+    // user.home/store/compaction/compactionLog
     private final String compactionLogPath;
+    // user.home/store/compaction/compactionCq
     private final String compactionCqPath;
     private final DefaultMessageStore defaultMessageStore;
     private final CompactionPositionMgr positionMgr;
     private final ConcurrentHashMap<String, CompactionLog> compactionLogTable;
+    // 6 线程
     private final ScheduledExecutorService compactionSchedule;
     private final int scanInterval = 30000;
+    //  15 * 60 * 1000 (900s)
     private final int compactionInterval;
+    // compactionThreadNum = 6
     private final int compactionThreadNum;
+    // maxOffsetMapSize = 100M
+    // 100M / 6
     private final int offsetMapSize;
     private String masterAddr;
 
@@ -68,17 +75,24 @@ public class CompactionStore {
         this.defaultMessageStore = defaultMessageStore;
         this.compactionLogTable = new ConcurrentHashMap<>();
         MessageStoreConfig config = defaultMessageStore.getMessageStoreConfig();
+        // user.home/store
         String storeRootPath = config.getStorePathRootDir();
+        // user.home/store/compaction
         this.compactionPath = Paths.get(storeRootPath, COMPACTION_DIR).toString();
+        // user.home/store/compaction/compactionLog
         this.compactionLogPath = Paths.get(compactionPath, COMPACTION_LOG_DIR).toString();
+        // user.home/store/compaction/compactionCq
         this.compactionCqPath = Paths.get(compactionPath, COMPACTION_CQ_DIR).toString();
         this.positionMgr = new CompactionPositionMgr(compactionPath);
+        // compactionThreadNum = 6
         this.compactionThreadNum = Math.min(Runtime.getRuntime().availableProcessors(), Math.max(1, config.getCompactionThreadNum()));
 
         this.compactionSchedule = ThreadUtils.newScheduledThreadPool(this.compactionThreadNum,
             new ThreadFactoryImpl("compactionSchedule_"));
+        // maxOffsetMapSize = 100M
+        // 100M / 6
         this.offsetMapSize = config.getMaxOffsetMapSize() / compactionThreadNum;
-
+        //  15 * 60 * 1000 (900s)
         this.compactionInterval = defaultMessageStore.getMessageStoreConfig().getCompactionScheduleInternal();
     }
 

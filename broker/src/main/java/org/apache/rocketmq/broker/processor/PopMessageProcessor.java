@@ -204,7 +204,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             }
         }
     }
-
+    // offset 为消息在对应 queueId 中的个数（并不是 bytes 单位），而是 queue 中的第几个消息
     public void notifyMessageArriving(final String topic, final int queueId, long offset,
         Long tagsCode, long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
         popLongPollingService.notifyMessageArrivingWithRetryTopic(

@@ -21,6 +21,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.message.MessageConst;
 
+// see : org.apache.rocketmq.store.CommitLog.checkMessageAndReturnSize(java.nio.ByteBuffer, boolean, boolean, boolean)
 public class DispatchRequest {
     private final String topic;
     private final int queueId;
@@ -28,14 +29,18 @@ public class DispatchRequest {
     private int msgSize;
     private final long tagsCode;
     private final long storeTimestamp;
+    // 第几个消息索引(全局)而不是 offset
     private final long consumeQueueOffset;
+    // 消息 key 可以指定多个，会为每个 key 建立索引
     private final String keys;
     private final boolean success;
+    // 消息 UniqKey 每个消息只能指定一个
     private final String uniqKey;
 
     private final int sysFlag;
     private final long preparedTransactionOffset;
     private final Map<String, String> propertiesMap;
+    // 在 enableCalcFilterBitMap 开启的时候会通过 CommitLogDispatcherCalcBitMap 计算
     private byte[] bitMap;
 
     private int bufferSize = -1;//the buffer size maybe larger than the msg size if the message is wrapped by something

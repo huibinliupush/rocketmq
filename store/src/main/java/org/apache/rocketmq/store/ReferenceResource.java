@@ -40,12 +40,16 @@ public abstract class ReferenceResource {
         return this.available;
     }
 
+    // intervalForcibly = destroyMapedFileIntervalForcibly = 1000 * 120
     public void shutdown(final long intervalForcibly) {
         if (this.available) {
+            // 第一次 shutdown
             this.available = false;
             this.firstShutdownTimestamp = System.currentTimeMillis();
+            // refCount 减 1， 如果 refCount 不为 0， 则停止 cleanup
             this.release();
         } else if (this.getRefCount() > 0) {
+            // 如果超过 120s 还未 refCount = 0，后面再调用 shutdown 那么就强制 cleanup
             if ((System.currentTimeMillis() - this.firstShutdownTimestamp) >= intervalForcibly) {
                 this.refCount.set(-1000 - this.getRefCount());
                 this.release();

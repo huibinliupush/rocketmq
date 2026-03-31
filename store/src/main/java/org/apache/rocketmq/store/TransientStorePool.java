@@ -32,11 +32,14 @@ public class TransientStorePool {
 
     private final int poolSize;
     private final int fileSize;
+    // 存放的事 5 个 1G 的 DirectByteBuffer,并且内存是被 mlock 的（访问时无匿名页缺页中断）
     private final Deque<ByteBuffer> availableBuffers;
     private volatile boolean isRealCommit = true;
 
     public TransientStorePool(final int poolSize, final int fileSize) {
+        // 5
         this.poolSize = poolSize;
+        // 1G
         this.fileSize = fileSize;
         this.availableBuffers = new ConcurrentLinkedDeque<>();
     }
@@ -45,13 +48,15 @@ public class TransientStorePool {
      * It's a heavy init method.
      */
     public void init() {
+        // poolSize 配置为 5
         for (int i = 0; i < poolSize; i++) {
+            // 创建 1G 的 DirectByteBuffer
             ByteBuffer byteBuffer = ByteBuffer.allocateDirect(fileSize);
 
             final long address = ((DirectBuffer) byteBuffer).address();
             Pointer pointer = new Pointer(address);
             LibC.INSTANCE.mlock(pointer, new NativeLong(fileSize));
-
+            // 存放的事 5 个 1G 的 DirectByteBuffer,并且内存是被 mlock 的（访问时无匿名页缺页中断）
             availableBuffers.offer(byteBuffer);
         }
     }

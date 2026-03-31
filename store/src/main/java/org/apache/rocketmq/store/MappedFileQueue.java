@@ -41,24 +41,30 @@ public class MappedFileQueue implements Swappable {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private static final Logger LOG_ERROR = LoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
     // user.home/stpre/commitlog
+    // user.home/store/consumequeue/topic/queueId
     protected final String storePath;
 
     protected final int mappedFileSize;
 
     protected final CopyOnWriteArrayList<MappedFile> mappedFiles = new CopyOnWriteArrayList<>();
-
+    // consume queue 这里为 null 因为是后台 reput 线程构建所以不需要异步创建，不用考虑文件的创建对实时性的影响
+    // commit log 会使用 allocateMappedFileService， 因为消息是实时写入，不能受到文件创建开销的影响
     protected final AllocateMappedFileService allocateMappedFileService;
-
+    // 全局 flushwhere , mappedFile 中有一个 flushPosition 指的是文件内部position(局部)
     protected long flushedWhere = 0;
+    // 全局
     protected long committedWhere = 0;
-
+    // 最后一个被 flush 的 message store timestamp
     protected volatile long storeTimestamp = 0;
 
     public MappedFileQueue(final String storePath, int mappedFileSize,
         AllocateMappedFileService allocateMappedFileService) {
         // user.home/stpre/commitlog
+        // user.home/store/consumequeue/topic/queueId
         this.storePath = storePath;
         this.mappedFileSize = mappedFileSize;
+        // consume queue 这里为 null 因为是后台 reput 线程构建所以不需要异步创建，不用考虑文件的创建对实时性的影响
+        // commit log 会使用 allocateMappedFileService， 因为消息是实时写入，不能受到文件创建开销的影响
         this.allocateMappedFileService = allocateMappedFileService;
     }
 
@@ -71,6 +77,8 @@ public class MappedFileQueue implements Swappable {
                 MappedFile cur = iterator.next();
 
                 if (pre != null) {
+                    // the adjacent mappedFile's offset don't match
+                    // 相邻的两个 mappedFile 日志不连续
                     if (cur.getFileFromOffset() - pre.getFileFromOffset() != this.mappedFileSize) {
                         LOG_ERROR.error("[BUG]The mappedFile queue's data is damaged, the adjacent mappedFile's offset don't match. pre file {}, cur file {}",
                             pre.getFileName(), cur.getFileName());
@@ -216,7 +224,8 @@ public class MappedFileQueue implements Swappable {
         // 将文件从 mappedFiles 中删除
         this.deleteExpiredFile(willRemoveFiles);
     }
-
+    // 只有彻底 destroy 成功的 file 才会被加入到 files 中
+    // 不包含 refCount > 0 无法删除的情况（这些 file 让其一直停留在 mappedFiles 中等下一次删除）
     void deleteExpiredFile(List<MappedFile> files) {
 
         if (!files.isEmpty()) {
@@ -243,6 +252,7 @@ public class MappedFileQueue implements Swappable {
 
     public boolean load() {
         // user.home/stpre/commitlog
+        // storePath/consumerqueues/topic/queueid
         File dir = new File(this.storePath);
         File[] ls = dir.listFiles();
         if (ls != null) {
@@ -252,7 +262,7 @@ public class MappedFileQueue implements Swappable {
     }
 
     public boolean doLoad(List<File> files) {
-        // ascending order
+        // ascending order 先按照fileName进行排序offset从小到大
         files.sort(Comparator.comparing(File::getName));
 
         for (int i = 0; i < files.size(); i++) {
@@ -312,14 +322,16 @@ public class MappedFileQueue implements Swappable {
         MappedFile mappedFileLast = getLastMappedFile();
 
         if (mappedFileLast == null) {
+            // 即将要创建的 mappedFile 起始 offset
             createOffset = startOffset - (startOffset % this.mappedFileSize);
         }
-
+        // 文件写满了
         if (mappedFileLast != null && mappedFileLast.isFull()) {
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
 
         if (createOffset != -1 && needCreate) {
+            // 对于 consume queue 来说只创建 nextFilePath 不会创建 nextNextFilePath
             return tryCreateMappedFile(createOffset);
         }
 
@@ -361,12 +373,13 @@ public class MappedFileQueue implements Swappable {
 
     protected MappedFile doCreateMappedFile(String nextFilePath, String nextNextFilePath) {
         MappedFile mappedFile = null;
-
+        // consume queue 不使用 allocateMappedFileService
         if (this.allocateMappedFileService != null) {
             mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
         } else {
             try {
+                // 如果不使用 allocateMappedFileService 的话，这里直接创建，不进行文件预热（只创建 nextFilePath）
                 mappedFile = new DefaultMappedFile(nextFilePath, this.mappedFileSize);
             } catch (IOException e) {
                 log.error("create mappedFile exception", e);
@@ -488,12 +501,19 @@ public class MappedFileQueue implements Swappable {
 
         }
     }
-
+    /**
+     *  expiredTime = 72 小时
+     *  deleteFilesInterval = deleteCommitLogFilesInterval = 100
+     *  intervalForcibly = destroyMapedFileIntervalForcibly = 1000 * 120
+     *  cleanImmediately = cleanAtOnce
+     *  deleteFileBatchMax = 10
+     * */
     public int deleteExpiredFileByTime(final long expiredTime,
         final int deleteFilesInterval,
         final long intervalForcibly,
         final boolean cleanImmediately,
         final int deleteFileBatchMax) {
+        // mappedFiles copy
         Object[] mfs = this.copyMappedFiles(0);
 
         if (null == mfs)
@@ -501,33 +521,52 @@ public class MappedFileQueue implements Swappable {
 
         int mfsLength = mfs.length - 1;
         int deleteCount = 0;
+        // 存储被 destroy 的 mappedFile
         List<MappedFile> files = new ArrayList<>();
         int skipFileNum = 0;
         if (null != mfs) {
             //do check before deleting
+            // 检查相邻的两个 mappedFile 日志是否连续， 比较两者的 fileFromOffset 差值是否正好是一个 mappedFiledSize
             checkSelf();
+            // 遍历 commitlog 所有的 mappedFile
             for (int i = 0; i < mfsLength; i++) {
+                // 从最老的commitlog开始清理
                 MappedFile mappedFile = (MappedFile) mfs[i];
+                // 最近的一次修改时间 + 72 小时
                 long liveMaxTimestamp = mappedFile.getLastModifiedTimestamp() + expiredTime;
+                // 如果 72 小时之内没有任何写入操作 或者 cleanImmediately（commitlog或者consumequeue 所在磁盘分区使用率超过了 85% ） 则 destroy
                 if (System.currentTimeMillis() >= liveMaxTimestamp || cleanImmediately) {
                     if (skipFileNum > 0) {
                         log.info("Delete CommitLog {} but skip {} files", mappedFile.getFileName(), skipFileNum);
                     }
+                    // 返回值 true 表示文件已经销毁，mappedByteBuffer(unmap),fileChannel.close,file.delete
+                    // 返回 false, 表示第一次 shutdown 的时候 refCount > 0 ,或者距离第一次 destroyMapedFileIntervalForcibly(120s) 之内即使 refCount > 0
+                    // 但超过 120s 就会强制 destroy
                     if (mappedFile.destroy(intervalForcibly)) {
+                        // 已经被 destroy 的 mappedFile 加入到 file 集合中
                         files.add(mappedFile);
                         deleteCount++;
-
+                        // 如果达到了每次批量删除文件的数目（10）
+                        // 为了防止一次定时任务占用过长时间，单次清理任务最多只处理 10个文件
                         if (files.size() >= deleteFileBatchMax) {
                             break;
                         }
 
                         if (deleteFilesInterval > 0 && (i + 1) < mfsLength) {
                             try {
+                                // 每次 destroy 一个 mappedFile, 睡眠 100ms
+                                // 如果最后一个 mappedFile destroy 则不需要在这里睡眠
+                                // 避免因连续、密集的磁盘 IO 操作影响消息的读写性能
+                                // 删除文件（尤其是通过 MappedFile.destroy 释放内存映射和物理文件）是一个相对耗时的 IO 操作。
+                                // 如果一次性连续删除几十上百个文件而不加停顿，可能会瞬间占满磁盘 IO 资源，
+                                // 导致 Broker 在该时刻处理消息写入（putMessage）或拉取（pullMessage）的延迟显著增加。
                                 Thread.sleep(deleteFilesInterval);
                             } catch (InterruptedException e) {
                             }
                         }
                     } else {
+                        // 表示第一次 shutdown 的时候 refCount > 0 或者距离第一次shutdown的时间在 destroyMapedFileIntervalForcibly(120s) 之内即使 refCount > 0
+                        // 如果删除某个文件时失败（例如文件正在被强制占用），则立即跳出循环，停止本次后续文件的删除尝试。
                         break;
                     }
                 } else {
@@ -537,7 +576,7 @@ public class MappedFileQueue implements Swappable {
                 }
             }
         }
-
+        // 从容器 mappedFiles 中清楚已经被 destroy 的 files
         deleteExpiredFile(files);
 
         return deleteCount;
@@ -554,11 +593,15 @@ public class MappedFileQueue implements Swappable {
 
             for (int i = 0; i < mfsLength; i++) {
                 boolean destroy;
+                // 从第一个 mappedFile 开始
                 MappedFile mappedFile = (MappedFile) mfs[i];
+                // 取出文件中最后一个消息索引
                 SelectMappedBufferResult result = mappedFile.selectMappedBuffer(this.mappedFileSize - unitSize);
                 if (result != null) {
+                    // 最后一个消息索引记录的消息在 commitlog 中的 offset
                     long maxOffsetInLogicQueue = result.getByteBuffer().getLong();
                     result.release();
+                    // 最后一个消息索引的 phyOffset < commitlog 的 minOffset 说明是无效的，要 destroy
                     destroy = maxOffsetInLogicQueue < offset;
                     if (destroy) {
                         log.info("physic min offset " + offset + ", logics in current mappedFile max offset "
@@ -571,7 +614,8 @@ public class MappedFileQueue implements Swappable {
                     log.warn("this being not executed forever.");
                     break;
                 }
-
+                // commitlog 这里是 120s 的 intervalForcibly
+                // consume queue 这里是 60s 的 intervalForcibly
                 if (destroy && mappedFile.destroy(1000 * 60)) {
                     files.add(mappedFile);
                     deleteCount++;
@@ -580,7 +624,8 @@ public class MappedFileQueue implements Swappable {
                 }
             }
         }
-
+        // 只有彻底 destroy 成功的 file 才会被加入到 files 中
+        // 不包含 refCount > 0 无法删除的情况（这些 file 让其一直停留在 mappedFiles 中等下一次删除）
         deleteExpiredFile(files);
 
         return deleteCount;
@@ -646,10 +691,17 @@ public class MappedFileQueue implements Swappable {
 
     public boolean flush(final int flushLeastPages) {
         boolean result = true;
+        // 只 flush FlushedWhere 所在的 mappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.getFlushedWhere(), this.getFlushedWhere() == 0);
         if (mappedFile != null) {
+            // store timestamp of the last message.
             long tmpTimeStamp = mappedFile.getStoreTimestamp();
+            // 如果 file 写满了，则立即无条件 flush
+            // flushLeastPages = 0 , 则只要是 writePosition > flushPosition 就立即 flush
+            // flushLeastPages > 0 ，则需要保证在 page cache 中积累的未 flush 的数据达到 flushLeastPages * 4K 才可能 flush
+            // offset 为新的 flushPosition(file局部位置)
             int offset = mappedFile.flush(flushLeastPages);
+            // 获取全局 flushwhere
             long where = mappedFile.getFileFromOffset() + offset;
             result = where == this.getFlushedWhere();
             this.setFlushedWhere(where);
@@ -663,11 +715,16 @@ public class MappedFileQueue implements Swappable {
 
     public synchronized boolean commit(final int commitLeastPages) {
         boolean result = true;
+        // 查询 CommittedWhere 所在的 mappedFile
         MappedFile mappedFile = this.findMappedFileByOffset(this.getCommittedWhere(), this.getCommittedWhere() == 0);
         if (mappedFile != null) {
+            // 返回 commitPosition(局部),writeBuffer在 mappedFile 中
             int offset = mappedFile.commit(commitLeastPages);
+            // 全局，新的CommittedWhere
             long where = mappedFile.getFileFromOffset() + offset;
+            // result = false means some data committed
             result = where == this.getCommittedWhere();
+            // 更新 CommittedWhere
             this.setCommittedWhere(where);
         }
 
