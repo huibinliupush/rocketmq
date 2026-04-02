@@ -723,6 +723,7 @@ public class CommitLog implements Swappable {
     // Fetch and compute the newest confirmOffset.
     // Even if it is just inited.
     // ConfirmOffset 表示存储在 commitlog 中的 offset , bytes that have been stored in commit log
+    // commit 到 page cache 的 offset(transientStorePool开启的情况下)
     public long getConfirmOffset() {
         if (this.defaultMessageStore.getBrokerConfig().isEnableControllerMode()) {
             if (this.defaultMessageStore.getMessageStoreConfig().getBrokerRole() != BrokerRole.SLAVE && !this.defaultMessageStore.getRunningFlags().isFenced()) {
@@ -2329,9 +2330,10 @@ public class CommitLog implements Swappable {
 
         public DefaultFlushManager() {
             if (FlushDiskType.SYNC_FLUSH == CommitLog.this.defaultMessageStore.getMessageStoreConfig().getFlushDiskType()) {
+                // SYNC_FLUSH 每隔 10ms，无条件flush
                 this.flushCommitLogService = new CommitLog.GroupCommitService();
             } else {
-                // ASYNC_FLUSH
+                // ASYNC_FLUSH 每隔 500ms 且有条件刷新（超过10s,超过16K）
                 this.flushCommitLogService = new CommitLog.FlushRealTimeService();
             }
 

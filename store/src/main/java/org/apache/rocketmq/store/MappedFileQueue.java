@@ -518,7 +518,7 @@ public class MappedFileQueue implements Swappable {
 
         if (null == mfs)
             return 0;
-
+        // 只有一个文件的话就不清理
         int mfsLength = mfs.length - 1;
         int deleteCount = 0;
         // 存储被 destroy 的 mappedFile
@@ -534,7 +534,9 @@ public class MappedFileQueue implements Swappable {
                 MappedFile mappedFile = (MappedFile) mfs[i];
                 // 最近的一次修改时间 + 72 小时
                 long liveMaxTimestamp = mappedFile.getLastModifiedTimestamp() + expiredTime;
-                // 如果 72 小时之内没有任何写入操作 或者 cleanImmediately（commitlog或者consumequeue 所在磁盘分区使用率超过了 85% ） 则 destroy
+                // 如果 72 小时之内没有任何写入操作 或者 cleanImmediately（commitlog或者consumequeue 所在磁盘分区使用率超过了 85% ） 则最最老的文件进行无条件 destroy
+                // 磁盘使用率达到75%则对超过72小时的文件进行删除
+                // 超过85%则从最老的文件开始直接删除（不管72小时的限制
                 if (System.currentTimeMillis() >= liveMaxTimestamp || cleanImmediately) {
                     if (skipFileNum > 0) {
                         log.info("Delete CommitLog {} but skip {} files", mappedFile.getFileName(), skipFileNum);

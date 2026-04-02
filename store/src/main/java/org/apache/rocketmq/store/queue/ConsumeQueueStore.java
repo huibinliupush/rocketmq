@@ -444,6 +444,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
         }
 
         ConsumeQueueInterface oldLogic = map.putIfAbsent(queueId, newLogic);
+        // 并发写入 ConcurrentMap 技巧
         if (oldLogic != null) {
             logic = oldLogic;
         } else {

@@ -113,6 +113,13 @@ public class PopLongPollingService extends ServiceThread {
      * 第二个消息到来，继续通知下一个消费者 PopRequest
      * 这样 consumeGroup 下的所有消费者就能均匀的平摊所有队列中的消息了
      *
+     * 不同的 consumeGroup 下的消费者拉取的位点不一样
+     * 所以这里需要判断拉取位点
+     * pull模式下，消费者是需要绑定queue的
+     * pop模式就不需要判断位点，因为它只区分consume Group
+     * 不会区分queue,所有消费者都可以消费 queue
+     * queue有消息就拉（只会通知每个consumeGroup下的一个popRequest）
+     *
      * org.apache.rocketmq.broker.longpolling.PopLongPollingService#notifyMessageArriving(java.lang.String, int, java.lang.String, boolean, java.lang.Long, long, byte[], java.util.Map, org.apache.rocketmq.remoting.CommandCallback)
      * */
     @Override
@@ -250,7 +257,12 @@ public class PopLongPollingService extends ServiceThread {
         Long tagsCode, long msgStoreTime, byte[] filterBitMap, Map<String, String> properties) {
         return notifyMessageArriving(topic, queueId, cid, force, tagsCode, msgStoreTime, filterBitMap, properties, null);
     }
-
+    // 不同的 consumeGroup 下的消费者拉取的位点不一样
+    // 所以这里需要判断拉取位点
+    // pull模式下，消费者是需要绑定queue的
+    // pop模式就不需要判断位点，因为它只区分consume Group
+    // 不会区分queue,所有消费者都可以消费 queue
+    // queue有消息就拉（只会通知每个consumeGroup下的一个popRequest）
     public boolean notifyMessageArriving(final String topic, final int queueId, final String cid, boolean force,
         Long tagsCode, long msgStoreTime, byte[] filterBitMap, Map<String, String> properties, CommandCallback callback) {
         // topic@cid@queueId

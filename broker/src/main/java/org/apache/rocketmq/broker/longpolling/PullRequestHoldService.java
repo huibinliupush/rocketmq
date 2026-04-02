@@ -139,7 +139,12 @@ public class PullRequestHoldService extends ServiceThread {
                 // 本轮未处理的 request，因为它的 msgOffset <= request.getPullFromThisOffset
                 // request 想要拉取的消息还未到来
                 List<PullRequest> replayList = new ArrayList<>();
-
+                // 不同的 consumeGroup 下的消费者拉取的位点不一样
+                // 所以这里需要判断拉取位点
+                // pull模式下，消费者是需要绑定queue的
+                // pop模式就不需要判断位点，因为它只区分consume Group
+                // 不会区分queue,所有消费者都可以消费 queue
+                // queue有消息就拉（只会通知每个consumeGroup下的一个popRequest）
                 for (PullRequest request : requestList) {
                     long newestOffset = maxOffset;
                     // 通知的 msg logic offset 比消费者想要拉取的 offset 小

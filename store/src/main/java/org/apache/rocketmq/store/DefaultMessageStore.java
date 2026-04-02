@@ -1682,7 +1682,7 @@ public class DefaultMessageStore implements MessageStore {
     }
     // 在 recover 的时候,起始 confirmOffset：
     // controller 模式:已经被构建索引的最大消息 offset ,位于 offset 之前的消息全部被构建索引了
-    // 非 controller 模式就是 lastValidMsgPhyOffset
+    // 非 controller 模式就是 lastValidMsgPhyOffset（可能还没有构建索引）
     @Override
     public void setConfirmOffset(long phyOffset) {
         this.commitLog.setConfirmOffset(phyOffset);
@@ -2371,7 +2371,12 @@ public class DefaultMessageStore implements MessageStore {
             boolean isUsageExceedsThreshold = this.isSpaceToDelete();
             // 初始为 0
             boolean isManualDelete = this.manualDeleteFileSeveralTimes.get() > 0;
-
+            // 清除时机：
+            // 时间达到 deleteWhen 或者磁盘使用率达到75%
+            // 清除条件：
+            // 如果 72 小时之内没有任何写入操作 或者 cleanImmediately（commitlog或者consumequeue 所在磁盘分区使用率超过了 85% ） 则最最老的文件进行无条件 destroy
+            // 磁盘使用率达到75%则对超过72小时的文件进行删除
+            // 超过85%则从最老的文件开始直接删除（不管72小时的限制
             if (isTimeUp || isUsageExceedsThreshold || isManualDelete) {
 
                 if (isManualDelete) {
@@ -2877,6 +2882,7 @@ public class DefaultMessageStore implements MessageStore {
                 if (logicsMsgTimestamp > 0) {
                     DefaultMessageStore.this.getStoreCheckpoint().setLogicsMsgTimestamp(logicsMsgTimestamp);
                 }
+                // 每 60s flush 一下
                 DefaultMessageStore.this.getStoreCheckpoint().flush();
             }
         }

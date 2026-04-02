@@ -35,7 +35,7 @@ public class StoreCheckpoint {
     private final MappedByteBuffer mappedByteBuffer;
     // 最后一个被 flush 的 message store timestamp
     private volatile long physicMsgTimestamp = 0;
-    // 存储最近一次 reput 到 consumequeue 的消息 storeTIme
+    // 存储最近一次 reput 到 consumequeue 的消息 storeTIme ，每 60s flush 一下
     private volatile long logicsMsgTimestamp = 0;
     // 每当新创建一个 indexFile 的时候，就会启动一个 flush 线程去 flush 前一个 indexFile
     // org.apache.rocketmq.store.index.IndexService.flush
