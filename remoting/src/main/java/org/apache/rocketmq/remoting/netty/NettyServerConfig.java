@@ -23,6 +23,9 @@ public class NettyServerConfig implements Cloneable {
      * By default, it's wildcard address, listening all network interfaces.
      */
     private String bindAddress = "0.0.0.0";
+    // tcp remote server:10911
+    // fast remote server : 10909
+    // proxy remote server:8080
     private int listenPort = 0;
     private int serverWorkerThreads = 8;
     private int serverCallbackExecutorThreads = 0;

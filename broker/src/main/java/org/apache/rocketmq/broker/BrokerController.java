@@ -200,6 +200,7 @@ public class BrokerController {
     protected final PopConsumerService popConsumerService;
     protected final ProducerManager producerManager;
     protected final ScheduleMessageService scheduleMessageService;
+    // ClientHousekeepingService
     protected final ClientHousekeepingService clientHousekeepingService;
     protected final PullMessageProcessor pullMessageProcessor;
     protected final PeekMessageProcessor peekMessageProcessor;
@@ -504,16 +505,18 @@ public class BrokerController {
     protected void initializeRemotingServer() throws CloneNotSupportedException {
         RemotingServer tcpRemotingServer = new NettyRemotingServer(this.nettyServerConfig, this.clientHousekeepingService);
         NettyServerConfig fastConfig = (NettyServerConfig) this.nettyServerConfig.clone();
-
+        // 10911 - 2 = 10909
         int listeningPort = nettyServerConfig.getListenPort() - 2;
         if (listeningPort < 0) {
             listeningPort = 0;
         }
+        // 10909
         fastConfig.setListenPort(listeningPort);
 
         RemotingServer fastRemotingServer = new NettyRemotingServer(fastConfig, this.clientHousekeepingService);
-
+        // 监听 10911
         remotingServerMap.put(TCP_REMOTING_SERVER, tcpRemotingServer);
+        // 监听  10911 - 2 = 10909
         remotingServerMap.put(FAST_REMOTING_SERVER, fastRemotingServer);
     }
 
@@ -1706,7 +1709,8 @@ public class BrokerController {
         if (remotingServerStartLatch != null) {
             remotingServerStartLatch.await();
         }
-
+        // 启动 TCP_REMOTING_SERVER 监听 10911
+        // 启动 FAST_REMOTING_SERVER 监听 10909
         for (Map.Entry<String, RemotingServer> entry : remotingServerMap.entrySet()) {
             RemotingServer remotingServer = entry.getValue();
             if (remotingServer != null) {
@@ -1801,7 +1805,7 @@ public class BrokerController {
     }
 
     public void start() throws Exception {
-
+        //  Register to broker after (startTime + disappearTimeAfterStart)
         this.shouldStartTime = System.currentTimeMillis() + messageStoreConfig.getDisappearTimeAfterStart();
 
         if (messageStoreConfig.getTotalReplicas() > 1 && this.brokerConfig.isEnableSlaveActingMaster()) {
@@ -1834,6 +1838,7 @@ public class BrokerController {
                         return;
                     }
                     // 每隔 30s
+                    // forceRegister = true
                     BrokerController.this.registerBrokerAll(true, false, brokerConfig.isForceRegister());
                 } catch (Throwable e) {
                     BrokerController.LOG.error("registerBrokerAll Exception", e);
@@ -1966,8 +1971,9 @@ public class BrokerController {
             } else {
                 topicConfigTable.put(topicConfig.getTopicName(), topicConfig);
             }
-
+            // enableSplitRegistration = false
             if (this.brokerConfig.isEnableSplitRegistration()
+                // splitRegistrationSize = 800
                 && topicConfigTable.size() >= this.brokerConfig.getSplitRegistrationSize()) {
                 TopicConfigAndMappingSerializeWrapper topicConfigWrapper = this.getTopicConfigManager().buildSerializeWrapper(topicConfigTable);
                 doRegisterBrokerAll(checkOrderConfig, oneway, topicConfigWrapper);
@@ -2007,9 +2013,9 @@ public class BrokerController {
             topicConfigWrapper,
             Lists.newArrayList(),
             oneway,
-            this.brokerConfig.getRegisterBrokerTimeoutMills(),
+            this.brokerConfig.getRegisterBrokerTimeoutMills(),// 24000
             this.brokerConfig.isEnableSlaveActingMaster(),
-            this.brokerConfig.isCompressedRegister(),
+            this.brokerConfig.isCompressedRegister(),// false
             this.brokerConfig.isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null,
             this.getBrokerIdentity());
 
@@ -2079,7 +2085,8 @@ public class BrokerController {
                     this.messageStore.updateHaMasterAddress(registerBrokerResult.getHaServerAddr());
                     this.messageStore.updateMasterAddress(registerBrokerResult.getMasterAddr());
                 }
-
+                // EnableControllerMode = false， slaveSynchronize 才会定时同步
+                // ControllerMode 有自己的同步方式
                 this.slaveSynchronize.setMasterAddr(registerBrokerResult.getMasterAddr());
                 if (checkOrderConfig) {
                     this.getTopicConfigManager().updateOrderTopicConfig(registerBrokerResult.getKvTable());

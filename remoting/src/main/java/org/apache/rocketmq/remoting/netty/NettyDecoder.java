@@ -33,6 +33,12 @@ public class NettyDecoder extends LengthFieldBasedFrameDecoder {
         Integer.parseInt(System.getProperty("com.rocketmq.remoting.frameMaxLength", "16777216"));
 
     public NettyDecoder() {
+        // By default, the decoder assumes that the length field represents the number of the bytes that follows the length field.
+        // length : 4(headerLength) + headerSize + bodySize
+        // headerLength: serializeType(1字节) + headerSize（3字节）
+        // header
+        // body
+        // initialBytesToStrip = 4 跳过一开始的 length 字段开始解码（从 headerLength 开始解码）
         super(FRAME_MAX_LENGTH, 0, 4, 0, 4);
     }
 
@@ -42,6 +48,9 @@ public class NettyDecoder extends LengthFieldBasedFrameDecoder {
         Stopwatch timer = Stopwatch.createStarted();
         try {
             // 按照 length 相关的参数从 in 中提取完整的 message
+            // headerLength: serializeType(1字节) + headerSize（3字节）
+            // header
+            // body
             frame = (ByteBuf) super.decode(ctx, in);
             if (null == frame) {
                 return null;

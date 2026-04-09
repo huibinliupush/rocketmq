@@ -29,7 +29,7 @@ import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 @ChannelHandler.Sharable
 public class NettyEncoder extends MessageToByteEncoder<RemotingCommand> {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.ROCKETMQ_REMOTING_NAME);
-
+    // netty 给的这个 ByteBuf out 会自动扩容 初始为 256
     @Override
     public void encode(ChannelHandlerContext ctx, RemotingCommand remotingCommand, ByteBuf out)
         throws Exception {

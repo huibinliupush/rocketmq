@@ -107,6 +107,7 @@ public class RemotingProtocolServer implements StartAndShutdown, RemotingProxyOu
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         NettyServerConfig defaultServerConfig = new NettyServerConfig();
+        // 8080
         defaultServerConfig.setListenPort(config.getRemotingListenPort());
         TlsSystemConfig.tlsTestModeEnable = config.isTlsTestModeEnable();
         System.setProperty(TlsSystemConfig.TLS_TEST_MODE_ENABLE, Boolean.toString(config.isTlsTestModeEnable()));

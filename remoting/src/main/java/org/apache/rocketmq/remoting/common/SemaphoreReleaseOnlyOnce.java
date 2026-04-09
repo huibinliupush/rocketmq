@@ -18,9 +18,13 @@ package org.apache.rocketmq.remoting.common;
 
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
-
+// 用于封装 NettyRemotingAbstract.semaphoreAsync 用于限定 on going 的异步请求个数
+// 通过 released 保证 semaphoreAsync 只能被释放一次
+// 每一次发起 request 请求都会先 Acquire semaphoreAsync, 成功之后用 SemaphoreReleaseOnlyOnce 封装 semaphoreAsync
+// 成功响应之后调用这里的 release 方法原子释放 see ： ResponseFuture
 public class SemaphoreReleaseOnlyOnce {
     private final AtomicBoolean released = new AtomicBoolean(false);
+    // org.apache.rocketmq.remoting.netty.NettyRemotingAbstract.semaphoreAsync
     private final Semaphore semaphore;
 
     public SemaphoreReleaseOnlyOnce(Semaphore semaphore) {

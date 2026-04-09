@@ -58,13 +58,13 @@ public class RocketMQSerializable {
 
     public static int rocketMQProtocolEncode(RemotingCommand cmd, ByteBuf out) {
         int beginIndex = out.writerIndex();
-        // int code(~32767)
+        // int code(~32767) requestCode
         out.writeShort(cmd.getCode());
-        // LanguageCode language
+        // LanguageCode language JAVA
         out.writeByte(cmd.getLanguage().getCode());
-        // int version(~32767)
+        // int version(~32767) rocketmq 版本 5.3.3
         out.writeShort(cmd.getVersion());
-        // int opaque
+        // int opaque requestId
         out.writeInt(cmd.getOpaque());
         // int flag
         out.writeInt(cmd.getFlag());
@@ -78,20 +78,29 @@ public class RocketMQSerializable {
         }
 
         int mapLenIndex = out.writerIndex();
+        // 记录ExtFields这个map 序列化之后的长度
         out.writeInt(0);
+        // 如果继承 FastCodesHeader ，那么 customHeader 也会被序列化
         if (cmd.readCustomHeader() instanceof FastCodesHeader) {
+            // FastCodesHeader 也是将重要的字段进行 key - value 进行序列化到 out 中
+            // 序列化方式同 ExtFields，后面 decode 的时候统一读取到 ExtFields 中
+            // see:org.apache.rocketmq.remoting.protocol.RocketMQSerializable.rocketMQProtocolDecode
             ((FastCodesHeader) cmd.readCustomHeader()).encode(out);
         }
         HashMap<String, String> map = cmd.getExtFields();
         if (map != null && !map.isEmpty()) {
             map.forEach((k, v) -> {
                 if (k != null && v != null) {
+                    // key 的长度用 short 类型写入：key 长度(2字节) + key bytes
                     writeStr(out, true, k);
+                    // value 的长度用 int 类型写入：value 长度(4字节) + value bytes
                     writeStr(out, false, v);
                 }
             });
         }
+        // - 4 表示要减去 mapLen 这个字段长度，剩下就是真正的 mapLen
         out.setInt(mapLenIndex, out.writerIndex() - mapLenIndex - 4);
+        // headerSize
         return out.writerIndex() - beginIndex;
     }
 
@@ -206,13 +215,13 @@ public class RocketMQSerializable {
     public static RemotingCommand rocketMQProtocolDecode(final ByteBuf headerBuffer,
         int headerLen) throws RemotingCommandException {
         RemotingCommand cmd = new RemotingCommand();
-        // int code(~32767)
+        // int code(~32767) requestCode
         cmd.setCode(headerBuffer.readShort());
-        // LanguageCode language
+        // LanguageCode language , JAVA
         cmd.setLanguage(LanguageCode.valueOf(headerBuffer.readByte()));
-        // int version(~32767)
+        // int version(~32767) RocketMq Version : V5.3.3
         cmd.setVersion(headerBuffer.readShort());
-        // int opaque
+        // int opaque requestId
         cmd.setOpaque(headerBuffer.readInt());
         // int flag
         cmd.setFlag(headerBuffer.readInt());
@@ -220,6 +229,7 @@ public class RocketMQSerializable {
         cmd.setRemark(readStr(headerBuffer, false, headerLen));
 
         // HashMap<String, String> extFields
+        // FastCodesHeader 在 encode 的时候也会全部序列化到 extFields 中，这里统一 decode 到 ExtFields
         int extFieldsLength = headerBuffer.readInt();
         if (extFieldsLength > 0) {
             if (extFieldsLength > headerLen) {

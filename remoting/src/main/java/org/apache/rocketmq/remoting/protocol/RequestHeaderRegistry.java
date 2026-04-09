@@ -31,6 +31,7 @@ public class RequestHeaderRegistry {
     private static final String PACKAGE_NAME = "org.apache.rocketmq.remoting.protocol.header";
     // 扫描 PACKAGE_NAME 下的所有 CommandCustomHeader 类，根据 RocketMQAction 注解标注的 requestCode(action.value())
     // 映射对应的 CommandCustomHeader
+    // see : org.apache.rocketmq.broker.BrokerController.registerProcessor
     private final Map<Integer, Class<? extends CommandCustomHeader>> requestHeaderMap = new HashMap<>();
 
     public static RequestHeaderRegistry getInstance() {

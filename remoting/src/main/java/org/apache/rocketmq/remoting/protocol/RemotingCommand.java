@@ -47,10 +47,13 @@ import org.apache.rocketmq.remoting.exception.RemotingCommandException;
 public class RemotingCommand {
     public static final String SERIALIZE_TYPE_PROPERTY = "rocketmq.serialize.type";
     public static final String SERIALIZE_TYPE_ENV = "ROCKETMQ_SERIALIZE_TYPE";
+    // see : org.apache.rocketmq.common.MQVersion
     public static final String REMOTING_VERSION_KEY = "rocketmq.remoting.version";
     static final Logger log = LoggerFactory.getLogger(LoggerName.ROCKETMQ_REMOTING_NAME);
     private static final int RPC_TYPE = 0; // 0, REQUEST_COMMAND
     private static final int RPC_ONEWAY = 1; // 0, RPC
+    // 缓存各个 CommandCustomHeader class 申明的所有字段（各种访问权限，static, 实例字段），但不包括父类中的继承字段
+    // 后续 encode header 的时候直接从缓存获取
     private static final Map<Class<? extends CommandCustomHeader>, Field[]> CLASS_HASH_MAP =
         new HashMap<>();
     private static final Map<Class, String> CANONICAL_NAME_CACHE = new HashMap<>();
@@ -67,44 +70,55 @@ public class RemotingCommand {
     private static final String BOOLEAN_CANONICAL_NAME_1 = Boolean.class.getCanonicalName();
     private static final String BOOLEAN_CANONICAL_NAME_2 = boolean.class.getCanonicalName();
     private static final String BOUNDARY_TYPE_CANONICAL_NAME = BoundaryType.class.getCanonicalName();
+    // 来自系统变量 rocketmq.remoting.version
+    // see : org.apache.rocketmq.common.MQVersion : V5_3_3
     private static volatile int configVersion = -1;
     private static AtomicInteger requestId = new AtomicInteger(0);
 
     private static SerializeType serializeTypeConfigInThisServer = SerializeType.JSON;
 
     static {
+        // rocketmq.serialize.type
         final String protocol = System.getProperty(SERIALIZE_TYPE_PROPERTY, System.getenv(SERIALIZE_TYPE_ENV));
         if (!StringUtils.isBlank(protocol)) {
             try {
+                // 默认 JSON
                 serializeTypeConfigInThisServer = SerializeType.valueOf(protocol);
             } catch (IllegalArgumentException e) {
                 throw new RuntimeException("parser specified protocol error. protocol=" + protocol, e);
             }
         }
     }
-
+    // requestCode 或者 responseCode
     private int code;
     private LanguageCode language = LanguageCode.JAVA;
+    // see : org.apache.rocketmq.common.MQVersion : V5_3_3
     private int version = 0;
+    // 溢出无所谓，这里就只是需要一个 requestId
     private int opaque = requestId.getAndIncrement();
+    // 低位为1 表示 response ,0 表示 request
     private int flag = 0;
+    // response msg
     private String remark;
     // customHeader 中自定义的 headers 在序列化的时候会先被写入 extFields 中
     // 然后 extFields 跟随 RemotingCommand 一起被序列化
 
-    // 存储 customHeader 类中非静态的 fieldName -> fieldValue
+    // 存储 customHeader 类中非静态的字段 fieldName -> fieldValue
+    // 另外 request 请求的一些额外字段也会保存在这里， see: DynamicalExtFieldRPCHook ... 相关 RPCHook
     private HashMap<String, String> extFields;
     // 如果继承 FastCodesHeader ，那么 customHeader 也会被序列化 (RocketMq 序列化方式)
     // see : org.apache.rocketmq.remoting.protocol.RocketMQSerializable.rocketMQProtocolEncode(org.apache.rocketmq.remoting.protocol.RemotingCommand, io.netty.buffer.ByteBuf)
 
     // JSON 序列化方式则只会序列化 extFields
+    // requestHeader
     private transient CommandCustomHeader customHeader; // 一般存放各个 requestCode 对应的请求实体信息
     private transient CommandCustomHeader cachedHeader;
 
     private SerializeType serializeTypeCurrentRPC = serializeTypeConfigInThisServer;
-
+    // requestBody(JSON序列化)
     private transient byte[] body;
     private boolean suspended;
+    // 编解码所需用时
     private transient Stopwatch processTimer;
     private transient List<CommandCallback> callbackList;
 
@@ -115,6 +129,8 @@ public class RemotingCommand {
         RemotingCommand cmd = new RemotingCommand();
         cmd.setCode(code);
         cmd.customHeader = customHeader;
+        // 设置 version ， 来自系统变量 rocketmq.remoting.version
+        // see : org.apache.rocketmq.common.MQVersion : V5_3_3
         setCmdVersion(cmd);
         return cmd;
     }
@@ -275,7 +291,7 @@ public class RemotingCommand {
     public void writeCustomHeader(CommandCustomHeader customHeader) {
         this.customHeader = customHeader;
     }
-
+    // 从 extFields 中反序列化 CommandCustomHeader
     public <T extends CommandCustomHeader> T decodeCommandCustomHeader(
         Class<T> classHeader) throws RemotingCommandException {
         return decodeCommandCustomHeader(classHeader, false);
@@ -292,29 +308,35 @@ public class RemotingCommand {
         }
         return classHeader.cast(cachedHeader);
     }
-
+    // 从 extFields 中反序列化 CommandCustomHeader
     public <T extends CommandCustomHeader> T decodeCommandCustomHeaderDirectly(Class<T> classHeader,
         boolean useFastEncode) throws RemotingCommandException {
         T objectHeader;
         try {
+            // classHeader 为需要解码的 CommandCustomHeader 实体类
+            // 创建对应的 CommandCustomHeader 实例
             objectHeader = classHeader.getDeclaredConstructor().newInstance();
         } catch (Exception e) {
             return null;
         }
-
+        // 通过 extFields 还原出 CommandCustomHeader，因为在序列化的时候首先会获取 CommandCustomHeader 的所有非静态字段 field
+        // 然后将 field 的 name, value 全部装进 extFields 中
+        // 反序列化就是从 extFields 中提取出 key, value ，分别是 CommandCustomHeader 对应 field name ,value
         if (this.extFields != null) {
             if (objectHeader instanceof FastCodesHeader && useFastEncode) {
+                // FastCodesHeader 有专门的 encode , decode 逻辑
                 ((FastCodesHeader) objectHeader).decode(this.extFields);
                 objectHeader.checkFields();
                 return objectHeader;
             }
-
+            // 通用 CommandCustomHeader，首先获取类中所有字段（包含父类继承的）
             Field[] fields = getClazzFields(classHeader);
             for (Field field : fields) {
                 if (!Modifier.isStatic(field.getModifiers())) {
                     String fieldName = field.getName();
                     if (!fieldName.startsWith("this")) {
                         try {
+                            // 通过 fieldName 到 extFields 中查找 value
                             String value = this.extFields.get(fieldName);
                             if (null == value) {
                                 if (!isFieldNullable(field)) {
@@ -324,6 +346,8 @@ public class RemotingCommand {
                             }
 
                             field.setAccessible(true);
+                            // 就是开发者在代码中书写类时最自然、最标准的名称形式。
+                            //  java.lang.String
                             String type = getCanonicalName(field.getType());
                             Object valueParsed;
 
@@ -342,7 +366,7 @@ public class RemotingCommand {
                             } else {
                                 throw new RemotingCommandException("the custom field <" + fieldName + "> type is not supported");
                             }
-
+                            // 设置 CommandCustomHeader 字段
                             field.set(objectHeader, valueParsed);
 
                         } catch (Throwable e) {
@@ -359,12 +383,16 @@ public class RemotingCommand {
     }
 
     //make it able to test
+    // 获取 class 申明的所有字段（各种访问权限，static, 实例字段）
     Field[] getClazzFields(Class<? extends CommandCustomHeader> classHeader) {
+        // 缓存各个 CommandCustomHeader class 申明的所有字段（各种访问权限，static, 实例字段），但不包括父类中的继承字段
+        // 后续 encode header 的时候直接从缓存获取
         Field[] field = CLASS_HASH_MAP.get(classHeader);
 
         if (field == null) {
             Set<Field> fieldList = new HashSet<>();
             for (Class className = classHeader; className != Object.class; className = className.getSuperclass()) {
+                // 获取 class 申明的所有字段（各种访问权限，static, 实例字段），但不包括父类中的继承字段
                 Field[] fields = className.getDeclaredFields();
                 fieldList.addAll(Arrays.asList(fields));
             }
@@ -385,7 +413,23 @@ public class RemotingCommand {
         }
         return NULLABLE_FIELD_CACHE.get(field);
     }
+/**
+ *
+ *
+ 类型	                                 getName()	            getSimpleName()	                  getCanonicalName()
+String.class	                        java.lang.String	        String	                        java.lang.String
+ 内部类 Outer$Inner.class	            com.example.Outer$Inner	    Inner	                      com.example.Outer.Inner
+ 匿名类 new Object(){}.getClass()	    com.example.Test$1	        (空字符串)	                        null
+ 局部内部类（方法内定义）	                com.example.Test$1Local	     Local	                            null
+ 基本类型 int.class	                        int	                    int	                                int
+ 数组 String[].class	                    [Ljava.lang.String;	       String[]	                         java.lang.String[]
 
+ getName()：返回 JVM 内部使用的二进制名称（Binary Name），对于内部类会使用 $ 分隔，数组使用 [L...; 形式。始终不为 null。
+
+ getSimpleName()：返回源代码中给出的底层类的简称，即不包含包名的部分。对于匿名类返回空字符串，对于数组会加上 []。
+
+ getCanonicalName()：返回 Java 语言规范中定义的规范名称。对于匿名类、局部内部类，因为没有规范的表示方式，会返回 null。对于数组，会递归地对组件类型调用 getCanonicalName()，然后加上 []。
+ * */
     private String getCanonicalName(Class clazz) {
         String name = CANONICAL_NAME_CACHE.get(clazz);
 
@@ -440,15 +484,17 @@ public class RemotingCommand {
             return RemotingSerializable.encode(this);
         }
     }
-
+    // 将 customHeader 类中非静态的 fieldName -> fieldValue 转移到 extFields
     public void makeCustomHeaderToNet() {
         if (this.customHeader != null) {
+            // 获取 class 申明的所有字段（各种访问权限，static, 实例字段），包括父类中的继承字段
             Field[] fields = getClazzFields(customHeader.getClass());
             if (null == this.extFields) {
                 this.extFields = new HashMap<>();
             }
 
             for (Field field : fields) {
+                // 过滤非 static 字段
                 if (!Modifier.isStatic(field.getModifiers())) {
                     String name = field.getName();
                     if (!name.startsWith("this")) {
@@ -478,13 +524,23 @@ public class RemotingCommand {
         if (SerializeType.ROCKETMQ == serializeTypeCurrentRPC) {
             if (customHeader != null && !(customHeader instanceof FastCodesHeader)) {
                 // 将 customHeader 类中非静态的 fieldName -> fieldValue 转移到 extFields
+                // 如果是 FastCodesHeader ，那么这里就不会填充 extFields，后续直接会将 customHeader 序列化
                 this.makeCustomHeaderToNet();
             }
             // RocketMQ 的序列化方式
             headerSize = RocketMQSerializable.rocketMQProtocolEncode(this, out);
         } else {
+            // 将 customHeader 类中非静态的 fieldName -> fieldValue 转移到 extFields
             this.makeCustomHeaderToNet();
-            // 将 RemotingCommand 中除了 body 的部分全部 JSON 序列化成 bytes (header)
+            // 将 RemotingCommand 中除了 body ，customHeader 等被 transient 标注的字段之外剩下的字段全部 JSON 序列化成 bytes (header)
+            /**
+             *
+             * Public 字段：类中的公开字段。
+             * Getter 方法：如果有 getXxx() 或 isXxx() 方法，且对应的属性存在，该属性会被序列化。
+             * 非static、非transient：Field 必须满足不是静态的且没有被 transient 修饰。
+             * 遵循JavaBean规范：fastjson通常依赖POJO的getter方法和字段名进行序列化。
+             *
+             * */
             byte[] header = RemotingSerializable.encode(this);
             headerSize = header.length;
             // 写入 header
@@ -536,7 +592,7 @@ public class RemotingCommand {
 
     @JSONField(serialize = false)
     public boolean isOnewayRPC() {
-        int bits = 1 << RPC_ONEWAY;
+        int bits = 1 << RPC_ONEWAY; // flag 低2位为1
         return (this.flag & bits) == bits;
     }
 
@@ -550,7 +606,7 @@ public class RemotingCommand {
 
     @JSONField(serialize = false)
     public RemotingCommandType getType() {
-        if (this.isResponseType()) {
+        if (this.isResponseType()) { // flag 最低位为 1
             return RemotingCommandType.RESPONSE_COMMAND;
         }
 

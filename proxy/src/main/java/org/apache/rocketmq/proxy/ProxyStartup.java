@@ -87,7 +87,7 @@ public class ProxyStartup {
             // local 模式创建 broker 启动
             MessagingProcessor messagingProcessor = createMessagingProcessor(); // 重点步骤
 
-            // create grpcServer
+            // create grpcServer 监听 8081
             GrpcServer grpcServer = GrpcServerBuilder.newBuilder(executor, ConfigurationManager.getProxyConfig().getGrpcServerPort())
                 .addService(createServiceProcessor(messagingProcessor))
                 .addService(ChannelzService.newInstance(100))
@@ -101,6 +101,7 @@ public class ProxyStartup {
             // which is stateless and has separate computing and storage. The proxy will focus on traffic management,
             // connection management, and observability while the broker pays more attention to
             // performance, storage, low latency, and high availability.
+            // 监听 8080
             RemotingProtocolServer remotingServer = new RemotingProtocolServer(messagingProcessor);
             PROXY_START_AND_SHUTDOWN.appendStartAndShutdown(remotingServer);
 

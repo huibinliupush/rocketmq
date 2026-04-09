@@ -151,11 +151,14 @@ import static org.apache.rocketmq.remoting.protocol.ResponseCode.CONTROLLER_MAST
 
 public class BrokerOuterAPI {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
+    // NettyRemotingClient
     private final RemotingClient remotingClient;
     private final TopAddressing topAddressing = new DefaultTopAddressing(MixAll.getWSAddr());
+    // core=4 , max=10, queue=32
     private final ExecutorService brokerOuterExecutor = ThreadUtils.newThreadPoolExecutor(4, 10, 1, TimeUnit.MINUTES,
             new ArrayBlockingQueue<>(32), new ThreadFactoryImpl("brokerOutApi_thread_", true));
     private final ClientMetadata clientMetadata;
+    // RpcClientImpl
     private final RpcClient rpcClient;
     private String nameSrvAddr = null;
 
@@ -519,8 +522,10 @@ public class BrokerOuterAPI {
             final byte[] body = requestBody.encode(compressed);
             final int bodyCrc32 = UtilAll.crc32(body);
             requestHeader.setBodyCrc32(bodyCrc32);
+            // 等待全部注册结果
             final CountDownLatch countDownLatch = new CountDownLatch(nameServerAddressList.size());
             for (final String namesrvAddr : nameServerAddressList) {
+                // core=4 , max=10, queue=32
                 brokerOuterExecutor.execute(new AbstractBrokerRunnable(brokerIdentity) {
                     @Override
                     public void run0() {
@@ -541,6 +546,7 @@ public class BrokerOuterAPI {
             }
 
             try {
+                // 等待全部注册结果
                 if (!countDownLatch.await(timeoutMills, TimeUnit.MILLISECONDS)) {
                     LOGGER.warn("Registration to one or more name servers does NOT complete within deadline. Timeout threshold: {}ms", timeoutMills);
                 }

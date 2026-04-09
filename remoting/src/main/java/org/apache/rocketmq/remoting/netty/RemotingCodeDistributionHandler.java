@@ -29,8 +29,9 @@ import org.apache.rocketmq.remoting.protocol.RemotingCommand;
 
 @ChannelHandler.Sharable
 public class RemotingCodeDistributionHandler extends ChannelDuplexHandler {
-
+    // 统计 requestCode 的次数
     private final ConcurrentMap<Integer, LongAdder> inboundDistribution;
+    // 统计 responseCode 的次数
     private final ConcurrentMap<Integer, LongAdder> outboundDistribution;
 
     public RemotingCodeDistributionHandler() {

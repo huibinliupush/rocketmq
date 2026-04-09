@@ -33,6 +33,14 @@ public abstract class RemotingSerializable {
         return json.getBytes(CHARSET_UTF8);
     }
 
+    /**
+     *
+     * Public 字段：类中的公开字段。
+     * Getter 方法：如果有 getXxx() 或 isXxx() 方法，且对应的属性存在，该属性会被序列化。
+     * 非static、非transient：Field 必须满足不是静态的且没有被 transient 修饰。
+     * 遵循JavaBean规范：fastjson通常依赖POJO的getter方法和字段名进行序列化。
+     *
+     * */
     public static String toJson(final Object obj, boolean prettyFormat) {
         return JSON.toJSONString(obj, prettyFormat);
     }

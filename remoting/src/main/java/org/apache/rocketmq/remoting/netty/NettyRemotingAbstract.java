@@ -123,10 +123,12 @@ public abstract class NettyRemotingAbstract {
     /**
      * custom rpc hooks
      * 1. name server : ZoneRouteRPCHook
+     * 2. broker : DynamicalExtFieldRPCHook,newAclRPCHook
      */
     protected List<RPCHook> rpcHooks = new ArrayList<>();
 
     // org.apache.rocketmq.broker.BrokerController.initialRequestPipeline
+    // AuthenticationPipeline -> AuthorizationPipeline
     protected RequestPipeline requestPipeline;
 
     protected AtomicBoolean isShuttingDown = new AtomicBoolean(false);
@@ -182,10 +184,12 @@ public abstract class NettyRemotingAbstract {
     public void processMessageReceived(ChannelHandlerContext ctx, RemotingCommand msg) {
         if (msg != null) {
             switch (msg.getType()) {
-                case REQUEST_COMMAND:
+                case REQUEST_COMMAND: // flag 最低位为 0 (默认)
+                    // server 端
                     processRequestCommand(ctx, msg);
                     break;
-                case RESPONSE_COMMAND:
+                case RESPONSE_COMMAND: // flag 最低位为 1
+                    // client 端
                     processResponseCommand(ctx, msg);
                     break;
                 default:
@@ -261,8 +265,11 @@ public abstract class NettyRemotingAbstract {
      * @param cmd request command.
      */
     public void processRequestCommand(final ChannelHandlerContext ctx, final RemotingCommand cmd) {
+        // 获取 requestCode 对应的 RequestProcessor，以及执行 processor 的 executor
         final Pair<NettyRequestProcessor, ExecutorService> matched = this.processorTable.get(cmd.getCode());
+        // 如果对应 requestCode 没有特殊定义 processor , 那么就是用默认的 processor —— defaultRequestProcessorPair
         final Pair<NettyRequestProcessor, ExecutorService> pair = null == matched ? this.defaultRequestProcessorPair : matched;
+        // 获取 requestID
         final int opaque = cmd.getOpaque();
 
         if (pair == null) {
@@ -388,14 +395,18 @@ public abstract class NettyRemotingAbstract {
         final int opaque = cmd.getOpaque();
         final ResponseFuture responseFuture = responseTable.get(opaque);
         if (responseFuture != null) {
+            // 设置 server 响应的 response
             responseFuture.setResponseCommand(cmd);
 
             responseTable.remove(opaque);
 
             if (responseFuture.getInvokeCallback() != null) {
+                // 异步回调
                 executeInvokeCallback(responseFuture);
             } else {
+                // 没有设置回调的话，客户端通过调用 waitResponse 方法同步等待 response
                 responseFuture.putResponse(cmd);
+                // 释放信号量
                 responseFuture.release();
             }
         } else {
@@ -405,9 +416,11 @@ public abstract class NettyRemotingAbstract {
 
     /**
      * Execute callback in callback executor. If callback executor is null, run directly in current thread
+     * ResponseFuture timeout 就会回调这里，see : scanResponseTable 方法（每隔1s执行一次）
      */
     private void executeInvokeCallback(final ResponseFuture responseFuture) {
         boolean runInThisThread = false;
+        // 如果没有指定 callbackExecutor 那么就用 publicExecutor
         ExecutorService executor = this.getCallbackExecutor();
         if (executor != null && !executor.isShutdown()) {
             try {
@@ -449,6 +462,8 @@ public abstract class NettyRemotingAbstract {
     }
 
     public void registerRPCHook(RPCHook rpcHook) {
+        // DynamicalExtFieldRPCHook
+        // newAclRPCHook
         if (rpcHook != null && !rpcHooks.contains(rpcHook)) {
             rpcHooks.add(rpcHook);
         }
@@ -503,15 +518,55 @@ public abstract class NettyRemotingAbstract {
         final long timeoutMillis)
         throws InterruptedException, RemotingSendRequestException, RemotingTimeoutException {
         try {
+            /**
+             *
+             * CompletableFuture 有三种最终状态：正常完成（有结果）、异常完成（有异常）、取消（也是一种异常完成）。
+             *
+             * thenApply 用于在当前阶段正常完成后，对结果进行同步转换。它返回一个新的 CompletableFuture。
+             *
+             * 如果当前阶段已经异常完成，那么依赖它的所有后续阶段（如 thenApply、thenAccept 等）都会直接以异常完成，
+             * 且该异常通常被包装成 CompletionException（cause 为原始异常），而不会执行任何函数。
+             *
+             * completeExceptionally 和 thenApply 的调用顺序不重要，
+             * 只要 completeExceptionally 在 thenApply 执行之前发生（或虽然之后但很快完成，取决于异步时序），
+             * 行为相同。如果 thenApply 注册时上游尚未完成，则上游之后异常完成也会导致上述行为。
+             *
+             * get() 是阻塞方法，用于等待 CompletableFuture 完成并返回结果。
+             *
+             * 如果 CompletableFuture 在调用 get() 之前已经完成（无论是正常完成、异常完成还是取消(特殊的异常完成)都属于完成情况，isDone = true），get() 会立即返回或抛出对应异常。
+             *
+             * 对于异常完成的情况：
+             *
+             * get() 抛出 ExecutionException，其 cause 为传递给 completeExceptionally 的异常对象。
+             *
+             * get(long timeout, TimeUnit unit) 同样立即抛出 ExecutionException，不会等待超时。
+             *
+             * 如果调用 get() 时 CompletableFuture 尚未完成，则会阻塞等待直到完成。但本问题明确先调用了 completeExceptionally，所以此时 Future 已经完成。
+             * */
+            // thenApply : Returns a new CompletionStage that, when this stage completes normally,
+            // is executed with this stage's result as the argument to the supplied function.
+            // 与 thenCompose 配合：先用 thenCompose 串联异步操作，再用 thenApply 同步转换最终结果。
+            // thenApply 是 CompletableFuture 中同步结果转换的核心方法，用于将异步计算的结果映射为另一个值。
+            // 它与 thenCompose 分工明确：thenApply 适用于“值到值”的转换，thenCompose 适用于“值到异步阶段”的转换
+            // https://chat.deepseek.com/a/chat/s/a3d819bb-ed54-473f-8371-e21464d5b07d
+            // thenApply：同步转换，fn 函数返回普通值 U，结果为 CompletableFuture<U>。
+            // thenCompose：fn 函数必须返回 CompletionStage<U>，结果直接是 CompletableFuture<U>（不会嵌套）。
             return invokeImpl(channel, request, timeoutMillis).thenApply(ResponseFuture::getResponseCommand)
                 .get(timeoutMillis, TimeUnit.MILLISECONDS);
+            /**
+             * 如果希望非阻塞地检查异常状态，可以使用 isCompletedExceptionally() 或 handle() / exceptionally() 等函数式方法。
+             *
+             * 在需要阻塞获取结果且关心原始异常时，使用 get() 并捕获 ExecutionException。
+             *
+             * 在链式异步编程中，通常推荐使用 join() 或 exceptionally() 等组合器，而不是直接调用 get()，以避免阻塞。
+             * */
         } catch (ExecutionException e) {
             throw new RemotingSendRequestException(channel.remoteAddress().toString(), e.getCause());
         } catch (TimeoutException e) {
             throw new RemotingTimeoutException(channel.remoteAddress().toString(), timeoutMillis, e.getCause());
         }
     }
-
+    // NettyRemotingClient 有覆盖
     public CompletableFuture<ResponseFuture> invokeImpl(final Channel channel, final RemotingCommand request,
         final long timeoutMillis) {
         return invoke0(channel, request, timeoutMillis);
@@ -527,6 +582,10 @@ public abstract class NettyRemotingAbstract {
         try {
             acquired = this.semaphoreAsync.tryAcquire(timeoutMillis, TimeUnit.MILLISECONDS);
         } catch (Throwable t) {
+            // 当一个 CompletableFuture 已经通过 completeExceptionally(Throwable ex) 方法异常完成后，
+            // 再调用其 thenApply 方法（或其他依赖方法如 thenAccept、thenCompose），
+            // 不会执行 thenApply 中传入的函数，而是直接返回一个已经以相同异常完成的新 CompletableFuture
+            // get(long timeout, TimeUnit unit) 立即抛出 ExecutionException，不会等待超时
             future.completeExceptionally(t);
             return future;
         }
@@ -686,6 +745,7 @@ public abstract class NettyRemotingAbstract {
     }
 
     class NettyEventExecutor extends ServiceThread {
+        // maxSize = 10000
         private final LinkedBlockingQueue<NettyEvent> eventQueue = new LinkedBlockingQueue<>();
 
         public void putNettyEvent(final NettyEvent event) {
@@ -701,11 +761,12 @@ public abstract class NettyRemotingAbstract {
         @Override
         public void run() {
             log.info(this.getServiceName() + " service started");
-
+            // brokerOuterAPI  client 指定为 null
             final ChannelEventListener listener = NettyRemotingAbstract.this.getChannelEventListener();
 
             while (!this.isStopped()) {
                 try {
+                    // maxSize = 10000
                     NettyEvent event = this.eventQueue.poll(3000, TimeUnit.MILLISECONDS);
                     if (event != null && listener != null) {
                         switch (event.getType()) {

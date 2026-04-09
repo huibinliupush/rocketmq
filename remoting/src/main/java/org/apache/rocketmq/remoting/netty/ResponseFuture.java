@@ -40,6 +40,7 @@ public class ResponseFuture {
 
     private final AtomicBoolean executeCallbackOnlyOnce = new AtomicBoolean(false);
     private volatile RemotingCommand responseCommand;
+    // 表示 channel.writeAndFlush 成功
     private volatile boolean sendRequestOK = true;
     private volatile Throwable cause;
     private volatile boolean interrupted = false;
@@ -52,9 +53,11 @@ public class ResponseFuture {
     public ResponseFuture(Channel channel, int opaque, RemotingCommand request, long timeoutMillis, InvokeCallback invokeCallback,
                           SemaphoreReleaseOnlyOnce once) {
         this.channel = channel;
+        // requestId
         this.opaque = opaque;
         this.request = request;
         this.timeoutMillis = timeoutMillis;
+        // 当 request 超时或者 response 到来回调这里，随后 callback 中通知 future
         this.invokeCallback = invokeCallback;
         this.once = once;
     }
@@ -62,11 +65,15 @@ public class ResponseFuture {
     public void executeInvokeCallback() {
         if (invokeCallback != null) {
             if (this.executeCallbackOnlyOnce.compareAndSet(false, true)) {
+                // 如果收到网络响应，就调用 setResponseCommand
                 RemotingCommand response = getResponseCommand();
                 if (response != null) {
+                    // 收到网络响应回调 operationSucceed
                     invokeCallback.operationSucceed(response);
                 } else {
+                    // request 超时，没有收到网络响应的情况，request 发送失败，回调 operationFail
                     if (!isSendRequestOK()) {
+                        // request 发送失败
                         invokeCallback.operationFail(new RemotingSendRequestException(channel.remoteAddress().toString(), getCause()));
                     } else if (isTimeout()) {
                         invokeCallback.operationFail(new RemotingTimeoutException(channel.remoteAddress().toString(), getTimeoutMillis(), getCause()));
@@ -74,6 +81,7 @@ public class ResponseFuture {
                         invokeCallback.operationFail(new RemotingException(getRequestCommand().toString(), getCause()));
                     }
                 }
+                // 无论收没收到 response 都会调用 operationComplete
                 invokeCallback.operationComplete(this);
             }
         }

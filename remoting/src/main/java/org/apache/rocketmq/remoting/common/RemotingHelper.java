@@ -198,6 +198,7 @@ public class RemotingHelper {
         if (null == channel) {
             return "";
         }
+        // ProxyProtocolAddress 存放在 channel Attributes 中，key 为 PROXY_PROTOCOL_ADDR，PROXY_PROTOCOL_PORT
         String addr = getProxyProtocolAddress(channel);
         if (StringUtils.isNotBlank(addr)) {
             return addr;
@@ -360,6 +361,7 @@ public class RemotingHelper {
         CompletableFuture<Void> completableFuture = new CompletableFuture<>();
         channelFuture.addListener((ChannelFutureListener) future -> {
             if (future.isSuccess()) {
+                // 等待 channelFuture 连接成功
                 completableFuture.complete(null);
             } else {
                 completableFuture.completeExceptionally(new RemotingConnectException(channelFuture.channel().remoteAddress().toString(), future.cause()));

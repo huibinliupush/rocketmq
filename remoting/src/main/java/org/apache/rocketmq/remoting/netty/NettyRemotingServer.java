@@ -98,8 +98,9 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
     protected final EventLoopGroup eventLoopGroupSelector;
     protected final EventLoopGroup eventLoopGroupBoss;
     protected final NettyServerConfig nettyServerConfig;
-    // 4 个核心线程的 FixedThreadPool
+    // 4 个核心线程的 FixedThreadPool(ServerCallbackExecutor)
     private final ExecutorService publicExecutor;
+    // 单线程
     private final ScheduledExecutorService scheduledExecutorService;
     // broker : ClientHousekeepingService
     // nameserver : org.apache.rocketmq.namesrv.NamesrvController.brokerHousekeepingService
@@ -144,11 +145,12 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         super(nettyServerConfig.getServerOnewaySemaphoreValue(), nettyServerConfig.getServerAsyncSemaphoreValue());
         this.serverBootstrap = new ServerBootstrap();
         this.nettyServerConfig = nettyServerConfig;
-        // broker : ClientHousekeepingService
+        // proxy , broker : ClientHousekeepingService
         // nameserver : org.apache.rocketmq.namesrv.NamesrvController.brokerHousekeepingService
         this.channelEventListener = channelEventListener;
-        // 4 个核心线程的 FixedThreadPool
+        // 4 个核心线程的 FixedThreadPool(ServerCallbackExecutor)
         this.publicExecutor = buildPublicExecutor(nettyServerConfig);
+        // 单线程
         this.scheduledExecutorService = buildScheduleExecutor();
         // 1 线程
         this.eventLoopGroupBoss = buildEventLoopGroupBoss();
@@ -439,6 +441,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
 
     private void printRemotingCodeDistribution() {
         if (distributionHandler != null) {
+            // 由 RemotingCodeDistributionHandler 负责记录
             String inBoundSnapshotString = distributionHandler.getInBoundSnapshotString();
             if (inBoundSnapshotString != null) {
                 TRAFFIC_LOGGER.info("Port: {}, RequestCode Distribution: {}",
@@ -571,6 +574,7 @@ public class NettyRemotingServer extends NettyRemotingAbstract implements Remoti
         protected void channelRead0(ChannelHandlerContext ctx, RemotingCommand msg) {
             int localPort = RemotingHelper.parseSocketAddressPort(ctx.channel().localAddress());
             // netty server start 之后会将 server 实例填充到该容器中
+            // TCP  server or Fast server
             NettyRemotingAbstract remotingAbstract = NettyRemotingServer.this.remotingServerTable.get(localPort);
             if (localPort != -1 && remotingAbstract != null) {
                 remotingAbstract.processMessageReceived(ctx, msg);

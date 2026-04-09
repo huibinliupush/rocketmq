@@ -42,13 +42,14 @@ import org.apache.rocketmq.remoting.protocol.statictopic.TopicConfigAndQueueMapp
 public class RpcClientImpl implements RpcClient {
 
     private ClientMetadata clientMetadata;
-
+    // NettyRemotingClient
     private RemotingClient remotingClient;
 
     private List<RpcClientHook> clientHookList = new ArrayList<>();
 
     public RpcClientImpl(ClientMetadata clientMetadata, RemotingClient remotingClient) {
         this.clientMetadata = clientMetadata;
+        // NettyRemotingClient
         this.remotingClient = remotingClient;
     }
 
