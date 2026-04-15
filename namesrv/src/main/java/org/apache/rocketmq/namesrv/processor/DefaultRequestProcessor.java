@@ -243,6 +243,7 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
             filterServerList = registerBrokerBody.getFilterServerList();
         } else {
             // RegisterBrokerBody of old version only contains TopicConfig.
+            // JSON 反序列化
             topicConfigWrapper = extractRegisterTopicConfigFromRequest(request);
         }
 
@@ -269,8 +270,9 @@ public class DefaultRequestProcessor implements NettyRequestProcessor {
 
         responseHeader.setHaServerAddr(result.getHaServerAddr());
         responseHeader.setMasterAddr(result.getMasterAddr());
-
+        // returnOrderTopicConfigToBroker = true
         if (this.namesrvController.getNamesrvConfig().isReturnOrderTopicConfigToBroker()) {
+            // 所有 orderTopic ， orderConfig
             byte[] jsonValue = this.namesrvController.getKvConfigManager().getKVListByNamespace(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG);
             response.setBody(jsonValue);
         }

@@ -39,6 +39,7 @@ public class BatchUnregistrationService extends ServiceThread {
 
     public BatchUnregistrationService(RouteInfoManager routeInfoManager, NamesrvConfig namesrvConfig) {
         this.routeInfoManager = routeInfoManager;
+        // 3000
         this.unregistrationQueue = new LinkedBlockingQueue<>(namesrvConfig.getUnRegisterBrokerQueueCapacity());
     }
 
@@ -67,7 +68,7 @@ public class BatchUnregistrationService extends ServiceThread {
 
                 // Add polled request
                 unregistrationRequests.add(request);
-
+                // 清理 brokerLiveTable，filterServerTable，brokerAddrTable（BrokerData）,clusterAddrTable,topicQueueTable
                 this.routeInfoManager.unRegisterBroker(unregistrationRequests);
             } catch (Throwable e) {
                 log.error("Handle unregister broker request failed", e);

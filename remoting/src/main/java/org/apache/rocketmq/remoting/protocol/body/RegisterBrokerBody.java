@@ -48,12 +48,14 @@ public class RegisterBrokerBody extends RemotingSerializable {
     private static final long MINIMUM_TAKE_TIME_MILLISECOND = 50;
 
     public byte[] encode(boolean compress) {
-
+        // false
         if (!compress) {
+            // 直接 json 序列化
             return super.encode();
         }
         long start = System.currentTimeMillis();
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+        // 压缩
         DeflaterOutputStream outputStream = new DeflaterOutputStream(byteArrayOutputStream, new Deflater(Deflater.BEST_COMPRESSION));
         DataVersion dataVersion = topicConfigSerializeWrapper.getDataVersion();
         ConcurrentMap<String, TopicConfig> topicConfigTable = cloneTopicConfigTable(topicConfigSerializeWrapper.getTopicConfigTable());

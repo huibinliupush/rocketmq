@@ -40,15 +40,15 @@ public class RegisterBrokerRequestHeader implements CommandCustomHeader {
     @RocketMQResource(ResourceType.CLUSTER)
     private String clusterName;
     @CFNotNull
-    private String haServerAddr;
+    private String haServerAddr;// brokerIP2:HaListenPort 10912
     @CFNotNull
     private Long brokerId;
     @CFNullable
-    private Long heartbeatTimeoutMillis;
+    private Long heartbeatTimeoutMillis;// isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null
     @CFNullable
-    private Boolean enableActingMaster;
+    private Boolean enableActingMaster;// 默认 false
 
-    private boolean compressed;
+    private boolean compressed;// false
 
     private Integer bodyCrc32 = 0;
 

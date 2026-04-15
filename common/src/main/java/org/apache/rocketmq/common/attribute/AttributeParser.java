@@ -51,6 +51,7 @@ public class AttributeParser {
                     throw new RuntimeException("add/alter attribute format is wrong: " + key);
                 }
             } else {
+                // -key3 的 value 为 空 ""
                 key = kv;
                 value = "";
                 if (!key.contains(ATTR_DELETE_MINUS_SIGN)) {
@@ -64,7 +65,9 @@ public class AttributeParser {
         }
         return attributes;
     }
-
+    // admin 命令原始指定 -a +key1=value1,+key2=value2,-key3,+key4=value4
+    // 首先通过 parseToMap 解析为 map 设置到 topicConfig 中： -key3 的 value 为 空 ""
+    // -key3,key1=value1,key2=value2,key4=value4
     public static String parseToString(Map<String, String> attributes) {
         if (attributes == null || attributes.size() == 0) {
             return "";
@@ -74,7 +77,7 @@ public class AttributeParser {
         for (Map.Entry<String, String> entry : attributes.entrySet()) {
 
             String value = entry.getValue();
-            if (Strings.isNullOrEmpty(value)) {
+            if (Strings.isNullOrEmpty(value)) { // 要删除的 key
                 kvs.add(entry.getKey());
             } else {
                 kvs.add(entry.getKey() + ATTR_KEY_VALUE_EQUAL_SIGN + entry.getValue());

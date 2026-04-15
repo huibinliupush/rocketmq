@@ -34,10 +34,51 @@ public class TopicConfig {
     private static final TypeReference<Map<String, String>> ATTRIBUTES_TYPE_REFERENCE = new TypeReference<Map<String, String>>() {
     };
     private String topicName;
+    // admin 创建默认为 8
     private int readQueueNums = defaultReadQueueNums;
+    /**
+     * writeQueueNums：指定生产者向该 Topic 发送消息时，可以写入的队列数量
+     * readQueueNums：指定消费者从该 Topic 拉取消息时，可以拉取的队列数量
+     *
+     * 核心差异：一个是“物理存在”，一个是“逻辑视图”
+     * 理解这两者最关键的在于物理存储层面：只有 writeQueueNums 指定的队列会实际创建对应的 ConsumeQueue 文件，而 readQueueNums 只是一个逻辑概念，用于告诉消费者可以从哪些队列中拉取消息
+     * 两者相等（最佳实践）：每个物理队列都有对应的消费者，系统工作正常，资源利用率最高。
+     *
+     * writeQueueNums > readQueueNums（消息堆积，无法消费）：
+     *
+     * 写入：生产者向所有（例如 queue 0-7）物理队列写入数据。
+     *
+     * 消费：消费者只被允许从部分（例如 queue 0-3）队列拉取消息。
+     *
+     * 后果：写入的部分队列（queue 4-7）会持续堆积消息，永远无法被消费，造成严重积压。
+     *
+     * writeQueueNums < readQueueNums（消费者空闲，资源浪费）：
+     *
+     * 写入：生产者只向部分（例如 queue 0-3）物理队列写入数据。
+     *
+     * 消费：消费者组会尝试从更多（例如 queue 0-7）队列拉取消息。
+     *
+     * 后果：多出的消费者（拉取 queue 4-7 的）会因为对应队列中没有消息而闲置，造成资源浪费
+     *
+     * 设计初衷：实现平滑的队列缩容
+     *
+     * RocketMQ 之所以提供两个独立的参数，而不是直接合并为一个，是为了在不重启应用且不丢失消息的情况下，平滑地减少队列数量（缩容）。
+     *
+     * 假设要将一个 Topic 的队列数从 16 缩容到 8，如果直接同时修改 writeQueueNums 和 readQueueNums，可能会导致部分消息未被消费。而利用读写队列的分离设计，可以采用更安全的两步式操作：
+     *
+     * 第一步：缩容写队列。将 writeQueueNums 从 16 改为 8。此时，生产者只向 queue 0-7 写入新消息，而 queue 8-15 中已有的旧消息则不再有新消息写入。
+     *
+     * 第二步：等待消费完成。现有的消费者组继续消费，直到 queue 8-15 中的所有积压消息被完全处理完毕。
+     *
+     * 第三步：缩容读队列。将 readQueueNums 也从 16 改为 8。此时，消费者也将只从 queue 0-7 拉取消息，整个缩容过程平滑完成。
+     *
+     * 这种设计确保了队列缩容过程中没有消息丢失，也无需重启任何服务。
+     * */
     private int writeQueueNums = defaultWriteQueueNums;
     private int perm = PermName.PERM_READ | PermName.PERM_WRITE;
     private TopicFilterType topicFilterType = TopicFilterType.SINGLE_TAG;
+    // org.apache.rocketmq.common.sysflag.TopicSysFlag.buildSysFlag
+    // isUnit , isUNIT_SUB(isCenterSync)
     private int topicSysFlag = 0;
     private boolean order = false;
     // Field attributes should not have ' ' char in key or value, otherwise will lead to decode failure.

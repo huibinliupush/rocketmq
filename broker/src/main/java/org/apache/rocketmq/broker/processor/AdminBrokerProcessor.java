@@ -572,10 +572,13 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
             topicConfig.setOrder(requestHeader.getOrder());
             String attributesModification = requestHeader.getAttributes();
             topicConfig.setAttributes(AttributeParser.parseToMap(attributesModification));
-
+            // enableMixedMessageType = false
+            // 校验 message.type 不能为 MIXED
             if (!brokerController.getBrokerConfig().isEnableMixedMessageType() && topicConfig.getAttributes() != null) {
                 // Get attribute by key with prefix sign
+                // +message.type，该 topic 属性可选取值范围 NORMAL, FIFO， DELAY, TRANSACTION ，默认 NORMAL
                 String msgTypeAttrKey = AttributeParser.ATTR_ADD_PLUS_SIGN + TopicAttributes.TOPIC_MESSAGE_TYPE_ATTRIBUTE.getName();
+                // 创建 topic 时是否指定了message.type
                 String msgTypeAttrValue = topicConfig.getAttributes().get(msgTypeAttrKey);
                 if (msgTypeAttrValue != null && msgTypeAttrValue.equals(TopicMessageType.MIXED.getValue())) {
                     response.setCode(ResponseCode.INVALID_PARAMETER);
@@ -592,9 +595,11 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
             }
 
             this.brokerController.getTopicConfigManager().updateTopicConfig(topicConfig);
+            // enableSingleTopicRegister = false
             if (brokerController.getBrokerConfig().isEnableSingleTopicRegister()) {
                 this.brokerController.registerSingleTopicAll(topicConfig);
             } else {
+                // 向 name server 注册增量信息（只注册变化的）
                 this.brokerController.registerIncrementBrokerData(topicConfig, this.brokerController.getTopicConfigManager().getDataVersion());
             }
             response.setCode(ResponseCode.SUCCESS);
@@ -2875,7 +2880,9 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
 
         return response;
     }
-
+    // 当副本组的最小brokerId 下线的时候，由 nameserver负责通知副本组中剩余的其他broker
+    // 当前副本组中最小的 brokerID 及其 addr
+    // 用于 old verson ha 手动上线 master
     private RemotingCommand notifyMinBrokerIdChange(ChannelHandlerContext ctx,
         RemotingCommand request) throws RemotingCommandException {
         NotifyMinBrokerIdChangeRequestHeader requestHeader = (NotifyMinBrokerIdChangeRequestHeader) request.decodeCommandCustomHeader(NotifyMinBrokerIdChangeRequestHeader.class);
@@ -2883,7 +2890,7 @@ public class AdminBrokerProcessor implements NettyRequestProcessor {
         RemotingCommand response = RemotingCommand.createResponseCommand(null);
 
         LOGGER.warn("min broker id changed, prev {}, new {}", this.brokerController.getMinBrokerIdInGroup(), requestHeader.getMinBrokerId());
-
+        // 当前副本组中最小的 brokerID 及其 addr
         this.brokerController.updateMinBroker(requestHeader.getMinBrokerId(), requestHeader.getMinBrokerAddr(),
             requestHeader.getOfflineBrokerAddr(),
             requestHeader.getHaBrokerAddr());

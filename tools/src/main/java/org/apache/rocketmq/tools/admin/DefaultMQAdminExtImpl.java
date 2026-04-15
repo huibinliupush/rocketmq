@@ -1013,24 +1013,32 @@ public class DefaultMQAdminExtImpl implements MQAdminExt, MQAdminExtInner {
         boolean isCluster) throws RemotingException, MQBrokerException, InterruptedException, MQClientException {
 
         if (isCluster) {
+            // 全量添加
+            // 写入 nameServer 的 KVConfigManager
             this.mqClientInstance.getMQClientAPIImpl().putKVConfigValue(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG, key, value, timeoutMillis);
         } else {
+            // 增量添加
             String oldOrderConfs = null;
             try {
+                // 从 nameserver 中的 KVConfigManager 获取 nameSpace , key 对应的 value
+                // brokerName1:topicWriteQueueNums;brokerName2:topicWriteQueueNums;brokerName3:topicWriteQueueNums
                 oldOrderConfs = this.mqClientInstance.getMQClientAPIImpl().getKVConfigValue(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG, key, timeoutMillis);
             } catch (Exception e) {
                 e.printStackTrace();
             }
-
+            // key:brokerName  value:brokerName1:topicWriteQueueNums(orderConf)
             Map<String, String> orderConfMap = new HashMap<>();
             if (!UtilAll.isBlank(oldOrderConfs)) {
                 String[] oldOrderConfArr = oldOrderConfs.split(";");
                 for (String oldOrderConf : oldOrderConfArr) {
+                    // brokerName1:topicWriteQueueNums
                     String[] items = oldOrderConf.split(":");
                     orderConfMap.put(items[0], oldOrderConf);
                 }
             }
+            // brokerName:topicWriteQueueNums
             String[] items = value.split(":");
+            // 将 broker 的 orderConf 添加到 orderConfMap
             orderConfMap.put(items[0], value);
 
             StringBuilder newOrderConf = new StringBuilder();
@@ -1039,6 +1047,7 @@ public class DefaultMQAdminExtImpl implements MQAdminExt, MQAdminExtInner {
                 newOrderConf.append(splitor).append(entry.getValue());
                 splitor = ";";
             }
+            // 写入 nameServer 的 KVConfigManager
             this.mqClientInstance.getMQClientAPIImpl().putKVConfigValue(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG, key, newOrderConf.toString(), timeoutMillis);
         }
     }

@@ -114,6 +114,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
 
     private final HashedWheelTimer timer = new HashedWheelTimer(r -> new Thread(r, "ClientHouseKeepingService"));
     // 定时向 DNS 拉取 namesrvAddrList（全量）
+    // 对于 nameserver 中的 client 来说，这里就是其本机地址和监听端口
     private final AtomicReference<List<String>> namesrvAddrList = new AtomicReference<>();
     // 有效的 namesrvAddrList（局部），每隔 3s 检测。 see : scanAvailableNameSrv 方法
     private final ConcurrentMap<String, Boolean> availableNamesrvAddrMap = new ConcurrentHashMap<>();
@@ -531,6 +532,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
 
     @Override
     public void updateNameServerAddressList(List<String> addrs) {
+        // 对于 nameserver 中的 client 来说，这里就是其本机地址和监听端口
         List<String> old = this.namesrvAddrList.get();
         boolean update = false;
 
@@ -551,6 +553,7 @@ public class NettyRemotingClient extends NettyRemotingAbstract implements Remoti
             if (update) {
                 Collections.shuffle(addrs);
                 LOGGER.info("name server address updated. NEW : {} , OLD: {}", addrs, old);
+                // 直接替换
                 this.namesrvAddrList.set(addrs);
 
                 // should close the channel if choosed addr is not exist.

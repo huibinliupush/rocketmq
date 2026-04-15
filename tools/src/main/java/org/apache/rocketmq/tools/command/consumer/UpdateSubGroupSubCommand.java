@@ -32,7 +32,7 @@ import org.apache.rocketmq.tools.command.CommandUtil;
 import org.apache.rocketmq.tools.command.SubCommand;
 import org.apache.rocketmq.tools.command.SubCommandException;
 
-public class UpdateSubGroupSubCommand implements SubCommand {
+        public class UpdateSubGroupSubCommand implements SubCommand {
 
     @Override
     public String commandName() {
@@ -207,6 +207,7 @@ public class UpdateSubGroupSubCommand implements SubCommand {
                 defaultMQAdminExt.start();
                 Set<String> masterSet =
                     CommandUtil.fetchMasterAddrByClusterName(defaultMQAdminExt, clusterName);
+                // 向所有副本集的 master broker 注册订阅关系
                 for (String addr : masterSet) {
                     try {
                         defaultMQAdminExt.createAndUpdateSubscriptionGroupConfig(addr, subscriptionGroupConfig);

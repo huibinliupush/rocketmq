@@ -254,6 +254,9 @@ public class BrokerController {
     protected ConfigStorage configStorage;
     protected TopicConfigManager topicConfigManager;
     protected SubscriptionGroupManager subscriptionGroupManager;
+    // updateAndCreateStaticTopic  的时候创建， see :UpdateStaticTopicSubCommand (admin 命令)
+    // static topic 元数据管理（TopicQueueMapping）来维护逻辑与物理队列的映射关系，并保证一致性
+    // https://chat.deepseek.com/a/chat/s/922add6b-b222-4e2f-93ea-ab593f4f9e40
     protected TopicQueueMappingManager topicQueueMappingManager;
     protected ExecutorService sendMessageExecutor;
     protected ExecutorService pullMessageExecutor;
@@ -296,8 +299,11 @@ public class BrokerController {
     // 不向 nameserver , controller 注册以及发送心跳
     // controller 初始化时设置 true
     protected volatile boolean isIsolated = false;
-    protected volatile long minBrokerIdInGroup = 0;
-    protected volatile String minBrokerAddrInGroup = null;
+    // 当副本组的最小brokerId 下线的时候，由 nameserver负责通知副本组中剩余的其他broker
+    // 当前副本组中最小的 brokerID 及其 addr
+    // EnableSlaveActingMaster = true 才会回调
+    protected volatile long minBrokerIdInGroup = 0;// minBrokerId
+    protected volatile String minBrokerAddrInGroup = null;// minBrokerAddr
     private final Lock lock = new ReentrantLock();
     protected final List<ScheduledFuture<?>> scheduledFutures = new ArrayList<>();
     protected ReplicasManager replicasManager;
@@ -366,12 +372,15 @@ public class BrokerController {
             this.subscriptionGroupManager = messageStoreConfig.isEnableLmq() ? new LmqSubscriptionGroupManager(this) : new SubscriptionGroupManager(this);
             this.consumerOffsetManager = messageStoreConfig.isEnableLmq() ? new LmqConsumerOffsetManager(this) : new ConsumerOffsetManager(this);
         }
+        // 用于 static topic , 逻辑队列与物理队列之间的映射
         this.topicQueueMappingManager = new TopicQueueMappingManager(this);
         this.authenticationMetadataManager = AuthenticationFactory.getMetadataManager(this.authConfig);
         this.authorizationMetadataManager = AuthorizationFactory.getMetadataManager(this.authConfig);
         this.pullMessageProcessor = new PullMessageProcessor(this);
         this.peekMessageProcessor = new PeekMessageProcessor(this);
+        // pull message long polling
         this.pullRequestHoldService = messageStoreConfig.isEnableLmq() ? new LmqPullRequestHoldService(this) : new PullRequestHoldService(this);
+        // pop message long polling
         this.popMessageProcessor = new PopMessageProcessor(this);
         this.notificationProcessor = new NotificationProcessor(this);
         this.pollingInfoProcessor = new PollingInfoProcessor(this);
@@ -380,6 +389,7 @@ public class BrokerController {
         this.sendMessageProcessor = new SendMessageProcessor(this);
         this.recallMessageProcessor = new RecallMessageProcessor(this);
         this.replyMessageProcessor = new ReplyMessageProcessor(this);
+        // 通知 long polling
         this.messageArrivingListener = new NotifyMessageArrivingListener(this.pullRequestHoldService, this.popMessageProcessor, this.notificationProcessor);
         this.consumerIdsChangeListener = new DefaultConsumerIdsChangeListener(this);
         this.consumerManager = new ConsumerManager(this.consumerIdsChangeListener, this.brokerStatsManager, this.brokerConfig);
@@ -388,6 +398,7 @@ public class BrokerController {
         this.consumerOrderInfoManager = new ConsumerOrderInfoManager(this);
         this.popInflightMessageCounter = new PopInflightMessageCounter(this);
         this.popConsumerService = brokerConfig.isPopConsumerKVServiceInit() ? new PopConsumerService(this) : null;
+        // 响应 Netty Event
         this.clientHousekeepingService = new ClientHousekeepingService(this);
         this.broker2Client = new Broker2Client(this);
         this.scheduleMessageService = new ScheduleMessageService(this);
@@ -400,7 +411,7 @@ public class BrokerController {
 
         this.queryAssignmentProcessor = new QueryAssignmentProcessor(this);
         this.clientManageProcessor = new ClientManageProcessor(this);
-        // broker 作为 slave 的时候，向 master 同步日志
+        // broker 作为 slave 的时候，向 master 同步日志(old version ha)
         this.slaveSynchronize = new SlaveSynchronize(this);
         this.endTransactionProcessor = new EndTransactionProcessor(this);
 
@@ -1943,7 +1954,7 @@ public class BrokerController {
             })
             .collect(Collectors.toConcurrentMap(TopicConfig::getTopicName, Function.identity()));
         topicConfigSerializeWrapper.setTopicConfigTable(topicConfigTable);
-
+        // 只有 static topic 才会有 topicQueueMappingManager 信息
         Map<String, TopicQueueMappingInfo> topicQueueMappingInfoMap = topicConfigList.stream()
             .map(TopicConfig::getTopicName)
             .map(topicName -> Optional.ofNullable(this.topicQueueMappingManager.getTopicQueueMapping(topicName))
@@ -1959,19 +1970,23 @@ public class BrokerController {
     }
 
     public synchronized void registerBrokerAll(final boolean checkOrderConfig, boolean oneway, boolean forceRegister) {
+        // 获取本机broker 的 TopicConfig
         ConcurrentMap<String, TopicConfig> topicConfigMap = this.getTopicConfigManager().getTopicConfigTable();
         ConcurrentHashMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<>();
 
         for (TopicConfig topicConfig : topicConfigMap.values()) {
             if (!PermName.isWriteable(this.getBrokerConfig().getBrokerPermission())
                 || !PermName.isReadable(this.getBrokerConfig().getBrokerPermission())) {
+                // 以 broker 设定的权限为准 BrokerPermission
                 topicConfigTable.put(topicConfig.getTopicName(),
                     new TopicConfig(topicConfig.getTopicName(), topicConfig.getReadQueueNums(), topicConfig.getWriteQueueNums(),
                         topicConfig.getPerm() & getBrokerConfig().getBrokerPermission()));
             } else {
+                // 向 nameServer 注册的 topic
                 topicConfigTable.put(topicConfig.getTopicName(), topicConfig);
             }
-            // enableSplitRegistration = false
+            // enableSplitRegistration = false ， 分批注册
+            // 超过 800 个 topicConfig 就分批注册
             if (this.brokerConfig.isEnableSplitRegistration()
                 // splitRegistrationSize = 800
                 && topicConfigTable.size() >= this.brokerConfig.getSplitRegistrationSize()) {
@@ -1980,7 +1995,10 @@ public class BrokerController {
                 topicConfigTable.clear();
             }
         }
-
+        // static topic 才会有 topicQueueMapping 信息
+        // updateAndCreateStaticTopic  的时候创建， see :UpdateStaticTopicSubCommand (admin 命令)
+        // static topic 元数据管理（TopicQueueMapping）来维护逻辑与物理队列的映射关系，并保证一致性
+        // https://chat.deepseek.com/a/chat/s/922add6b-b222-4e2f-93ea-ab593f4f9e40
         Map<String, TopicQueueMappingInfo> topicQueueMappingInfoMap = this.getTopicQueueMappingManager().getTopicQueueMappingTable().entrySet().stream()
             .map(entry -> new AbstractMap.SimpleImmutableEntry<>(entry.getKey(), TopicQueueMappingDetail.cloneAsMappingInfo(entry.getValue())))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
@@ -1991,8 +2009,9 @@ public class BrokerController {
             this.getBrokerAddr(),
             this.brokerConfig.getBrokerName(),
             this.brokerConfig.getBrokerId(),
-            this.brokerConfig.getRegisterBrokerTimeoutMills(),
+            this.brokerConfig.getRegisterBrokerTimeoutMills(),// 24s
             this.brokerConfig.isInBrokerContainer())) {
+            // 向 nameServer 注册本机 broker 的 topicConfig,TopicQueueMappingInfo(static topic)
             doRegisterBrokerAll(checkOrderConfig, oneway, topicConfigWrapper);
         }
     }
@@ -2009,11 +2028,11 @@ public class BrokerController {
             this.getBrokerAddr(),
             this.brokerConfig.getBrokerName(),
             this.brokerConfig.getBrokerId(),
-            this.getHAServerAddr(),
+            this.getHAServerAddr(), // brokerIp2 : haListenPort
             topicConfigWrapper,
             Lists.newArrayList(),
             oneway,
-            this.brokerConfig.getRegisterBrokerTimeoutMills(),// 24000
+            this.brokerConfig.getRegisterBrokerTimeoutMills(),// 24s
             this.brokerConfig.isEnableSlaveActingMaster(),
             this.brokerConfig.isCompressedRegister(),// false
             this.brokerConfig.isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null,
@@ -2081,7 +2100,9 @@ public class BrokerController {
         boolean checkOrderConfig) {
         for (RegisterBrokerResult registerBrokerResult : registerBrokerResultList) {
             if (registerBrokerResult != null) {
+                // controller mode 开启 update 变为 true
                 if (this.updateMasterHAServerAddrPeriodically && registerBrokerResult.getHaServerAddr() != null) {
+                    // 如果该 broker 是 slave, 那么 nameServer 会返回其所属副本集中master 的相关信息
                     this.messageStore.updateHaMasterAddress(registerBrokerResult.getHaServerAddr());
                     this.messageStore.updateMasterAddress(registerBrokerResult.getMasterAddr());
                 }
@@ -2089,6 +2110,7 @@ public class BrokerController {
                 // ControllerMode 有自己的同步方式
                 this.slaveSynchronize.setMasterAddr(registerBrokerResult.getMasterAddr());
                 if (checkOrderConfig) {
+                    // name server 会返回所有 orderTopic 的 orderConfig(不管topic在不在该broker上)
                     this.getTopicConfigManager().updateOrderTopicConfig(registerBrokerResult.getKvTable());
                 }
                 break;
@@ -2191,7 +2213,9 @@ public class BrokerController {
         // wakeup HAClient
         this.messageStore.wakeupHAClient();
     }
-
+    // 当副本组的最小brokerId 下线的时候，由 nameserver负责通知副本组中剩余的其他broker
+    // 当前副本组中最小的 brokerID 及其 addr
+    // EnableSlaveActingMaster = true 才会回调
     private void onMinBrokerChange(long minBrokerId, String minBrokerAddr, String offlineBrokerAddr,
         String masterHaAddr) {
         LOG.info("Min broker changed, old: {}-{}, new {}-{}",
@@ -2199,7 +2223,7 @@ public class BrokerController {
 
         this.minBrokerIdInGroup = minBrokerId;
         this.minBrokerAddrInGroup = minBrokerAddr;
-
+        // 如果当前 broker 是副本集中的最小 brokerId，那么开启 slaveActMaster 逻辑
         this.changeSpecialServiceStatus(this.brokerConfig.getBrokerId() == this.minBrokerIdInGroup);
 
         if (offlineBrokerAddr != null && offlineBrokerAddr.equals(this.slaveSynchronize.getMasterAddr())) {
@@ -2235,9 +2259,11 @@ public class BrokerController {
             }
         }
     }
-
+    // 当副本组的最小brokerId 下线的时候，由 nameserver负责通知副本组中剩余的其他broker
+    // 当前副本组中最小的 brokerID 及其 addr
     public void updateMinBroker(long minBrokerId, String minBrokerAddr, String offlineBrokerAddr,
         String masterHaAddr) {
+        // 当前 broker 不是 master
         if (brokerConfig.isEnableSlaveActingMaster() && brokerConfig.getBrokerId() != MixAll.MASTER_ID) {
             try {
                 if (lock.tryLock(3000, TimeUnit.MILLISECONDS)) {
@@ -2329,7 +2355,9 @@ public class BrokerController {
     public void setTopicConfigManager(TopicConfigManager topicConfigManager) {
         this.topicConfigManager = topicConfigManager;
     }
-
+    // updateAndCreateStaticTopic  的时候创建， see :UpdateStaticTopicSubCommand (admin 命令)
+    // static topic 元数据管理（TopicQueueMapping）来维护逻辑与物理队列的映射关系，并保证一致性
+    // https://chat.deepseek.com/a/chat/s/922add6b-b222-4e2f-93ea-ab593f4f9e40
     public TopicQueueMappingManager getTopicQueueMappingManager() {
         return topicQueueMappingManager;
     }

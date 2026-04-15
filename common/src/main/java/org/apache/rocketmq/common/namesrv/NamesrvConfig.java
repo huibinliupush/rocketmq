@@ -71,7 +71,9 @@ public class NamesrvConfig {
 
 
     private volatile boolean enableTopicList = true;
-
+    // 用于 old verson ha 手动上线 master
+    // 通知副本组中的其他 broker,当前副本组中最小的brokerId及其addr
+    // enableSlaveActMaster = true 才起作用
     private volatile boolean notifyMinBrokerIdChanged = false;
 
     /**

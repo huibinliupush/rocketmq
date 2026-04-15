@@ -25,7 +25,7 @@ public abstract class RpcRequestHeader implements CommandCustomHeader {
     protected String ns;
     //if the data has been namespaced
     protected Boolean nsd;
-    //the abstract remote addr name, usually the physical broker name
+    //the abstract remote addr name, usually the physical broker name(static topic)
     protected String bname;
     //oneway
     protected Boolean oway;

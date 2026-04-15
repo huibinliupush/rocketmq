@@ -24,8 +24,10 @@ public class NettyServerConfig implements Cloneable {
      */
     private String bindAddress = "0.0.0.0";
     // tcp remote server:10911
+    // broker ha : 10912
     // fast remote server : 10909
     // proxy remote server:8080
+    // nameServer : 9876
     private int listenPort = 0;
     private int serverWorkerThreads = 8;
     private int serverCallbackExecutorThreads = 0;

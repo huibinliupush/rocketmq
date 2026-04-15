@@ -38,6 +38,7 @@ public class ClientMetadata {
 
     private final ConcurrentMap<String/* Topic */, TopicRouteData> topicRouteTable = new ConcurrentHashMap<>();
     private final ConcurrentMap<String/* Topic */, ConcurrentMap<MessageQueue, String/*brokerName*/>> topicEndPointsTable = new ConcurrentHashMap<>();
+    // 每 5s 向 name server 获取集群信息 ClusterInfo ，刷新本地缓存
     private final ConcurrentMap<String/* Broker Name */, HashMap<Long/* brokerId */, String/* address */>> brokerAddrTable =
         new ConcurrentHashMap<>();
     private final ConcurrentMap<String/* Broker Name */, HashMap<String/* address */, Integer>> brokerVersionTable =
@@ -73,7 +74,7 @@ public class ClientMetadata {
         }
         return mq.getBrokerName();
     }
-
+    // 每 5s 向 name server 获取集群信息 ClusterInfo ，刷新本地缓存
     public void refreshClusterInfo(ClusterInfo clusterInfo) {
         if (clusterInfo == null
             || clusterInfo.getBrokerAddrTable() == null) {

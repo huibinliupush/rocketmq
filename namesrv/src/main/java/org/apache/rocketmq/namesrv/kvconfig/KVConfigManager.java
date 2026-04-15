@@ -34,7 +34,10 @@ public class KVConfigManager {
     private final NamesrvController namesrvController;
 
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    // from org.apache.rocketmq.common.namesrv.NamesrvConfig.kvConfigPath
+    // from org.apache.rocketmq.common.namesrv.NamesrvConfig.kvConfigPath,比如：
+    // nameSpace : NAMESPACE_ORDER_TOPIC_CONFIG
+    // key : topic
+    // value : brokerName1:topicWriteQueueNums;brokerName2:topicWriteQueueNums;brokerName3:topicWriteQueueNums
     private final HashMap<String/* Namespace */, HashMap<String/* Key */, String/* Value */>> configTable =
         new HashMap<>();
 

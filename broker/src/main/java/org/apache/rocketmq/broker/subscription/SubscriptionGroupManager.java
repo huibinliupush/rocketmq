@@ -43,6 +43,8 @@ import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfi
 public class SubscriptionGroupManager extends ConfigManager {
     protected static final Logger log = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     // 加载自 user.home/store/config/subscriptionGroup.json
+    // consumerGroup 对应的订阅关系 SubscriptionGroupConfig
+    // 通过 ./mqadmin updateSubGroup
     protected ConcurrentMap<String, SubscriptionGroupConfig> subscriptionGroupTable =
         new ConcurrentHashMap<>(1024);
 
@@ -140,6 +142,7 @@ public class SubscriptionGroupManager extends ConfigManager {
 
     public void updateSubscriptionGroupConfig(final SubscriptionGroupConfig config) {
         updateSubscriptionGroupConfigWithoutPersist(config);
+        // user.home/store/config/subscriptionGroup.json
         this.persist();
     }
 

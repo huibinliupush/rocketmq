@@ -138,16 +138,20 @@ public class MQAdminStartup {
         try {
             switch (args.length) {
                 case 0:
+                    // ./mqadmin
                     printHelp();
                     break;
                 case 2:
+                    // ./mqadmin help <command>
                     if (args[0].equals("help")) {
                         SubCommand cmd = findSubCommand(args[1]);
                         if (cmd != null) {
                             // 构建公共 option : -n -h
                             Options options = ServerUtil.buildCommandlineOptions(new Options());
+                            // 构建对应命令的 options
                             options = cmd.buildCommandlineOptions(options);
                             if (options != null) {
+                                // 打印 命令的 options
                                 ServerUtil.printCommandLineHelp("mqadmin " + cmd.commandName(), options);
                             }
                         } else {
@@ -159,9 +163,11 @@ public class MQAdminStartup {
                 default:
                     SubCommand cmd = findSubCommand(args[0]);
                     if (cmd != null) {
+                        // 去掉 args[0] - command,剩下的就是该 command 的参数
                         String[] subargs = parseSubArgs(args);
                         // 构建公共 option : -n -h
                         Options options = ServerUtil.buildCommandlineOptions(new Options());
+                        // 填充 command 参数
                         final CommandLine commandLine =
                             ServerUtil.parseCmdLine("mqadmin " + cmd.commandName(), subargs, cmd.buildCommandlineOptions(options),
                                 new DefaultParser());
@@ -177,6 +183,11 @@ public class MQAdminStartup {
                             // 由 broker 端的 AdminBrokerProcessor 处理相关的命令
                             cmd.execute(commandLine, options, rpcHook);
                         } else {
+                            // 只能在 rocketmq 部署的机器上执行
+                            // ROCKETMQ_HOME/conf/tools.yml 保存 ACCESS_KEY，SECRET_KEY
+                            // admin 请求需要带上这两个 key
+                            // 对应 broker 也会加载 ROCKETMQ_HOME/conf/tools.yml ， 检查 admin 请求的 ACCESS_KEY，SECRET_KEY
+                            // 用 SecretKey 对 requestHeader 与 requestBody ，ACCESS_KEY 的字节的签名
                             cmd.execute(commandLine, options, AclUtils.getAclRPCHook(ROCKETMQ_HOME + MixAll.ACL_CONF_TOOLS_FILE));
                         }
                     } else {

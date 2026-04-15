@@ -449,7 +449,7 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
 
         CreateTopicRequestHeader requestHeader = new CreateTopicRequestHeader();
         requestHeader.setTopic(topicConfig.getTopicName());
-        requestHeader.setDefaultTopic(defaultTopic);
+        requestHeader.setDefaultTopic(defaultTopic);// AUTO_CREATE_TOPIC_KEY_TOPIC
         requestHeader.setReadQueueNums(topicConfig.getReadQueueNums());
         requestHeader.setWriteQueueNums(topicConfig.getWriteQueueNums());
         requestHeader.setPerm(topicConfig.getPerm());
@@ -459,7 +459,7 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
         requestHeader.setAttributes(AttributeParser.parseToString(topicConfig.getAttributes()));
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.UPDATE_AND_CREATE_TOPIC, requestHeader);
-
+        // broker vip channel port ： 原始 port - 2(默认不使用 vip)
         RemotingCommand response = this.remotingClient.invokeSync(MixAll.brokerVIPChannel(this.clientConfig.isVipChannelEnabled(), addr),
             request, timeoutMillis);
         assert response != null;
@@ -2170,7 +2170,7 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
         requestHeader.setValue(value);
 
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.PUT_KV_CONFIG, requestHeader);
-
+        // 向所有 nameServer 添加
         List<String> nameServerAddressList = this.remotingClient.getNameServerAddressList();
         if (nameServerAddressList != null) {
             RemotingCommand errResponse = null;

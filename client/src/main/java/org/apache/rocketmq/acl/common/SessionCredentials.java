@@ -28,6 +28,7 @@ public class SessionCredentials {
     public static final Charset CHARSET = StandardCharsets.UTF_8;
     public static final String ACCESS_KEY = "AccessKey";
     public static final String SECRET_KEY = "SecretKey";
+    // 用 SecretKey 对 requestHeader 与 requestBody ，ACCESS_KEY 的字节的签名
     public static final String SIGNATURE = "Signature";
     public static final String SECURITY_TOKEN = "SecurityToken";
 

@@ -90,16 +90,17 @@ public class CommandUtil {
         throws InterruptedException, RemotingConnectException, RemotingTimeoutException,
         RemotingSendRequestException, MQBrokerException {
         Set<String> masterSet = new HashSet<>();
-
+        // 从 nameServer 的 RouteInfoManager 中获取 BrokerClusterInfo
         ClusterInfo clusterInfoSerializeWrapper = adminExt.examineBrokerClusterInfo();
-
+        // cluster 中的所有 brokerName
         Set<String> brokerNameSet = clusterInfoSerializeWrapper.getClusterAddrTable().get(clusterName);
 
         if (brokerNameSet != null) {
             for (String brokerName : brokerNameSet) {
+                // 获取副本集信息
                 BrokerData brokerData = clusterInfoSerializeWrapper.getBrokerAddrTable().get(brokerName);
                 if (brokerData != null) {
-
+                    // BrokerAddrs : The key is the brokerId, and the value is the address of the single broker instance
                     String addr = brokerData.getBrokerAddrs().get(MixAll.MASTER_ID);
                     if (addr != null) {
                         masterSet.add(addr);
@@ -161,6 +162,7 @@ public class CommandUtil {
 
     public static Set<String> fetchBrokerNameByClusterName(final MQAdminExt adminExt, final String clusterName)
         throws Exception {
+        // 从 nameServer 的 RouteInfoManager 中获取 BrokerClusterInfo
         ClusterInfo clusterInfoSerializeWrapper = adminExt.examineBrokerClusterInfo();
         Set<String> brokerNameSet = clusterInfoSerializeWrapper.getClusterAddrTable().get(clusterName);
         if (brokerNameSet == null || brokerNameSet.isEmpty()) {
@@ -170,11 +172,13 @@ public class CommandUtil {
     }
 
     public static String fetchBrokerNameByAddr(final MQAdminExt adminExt, final String addr) throws Exception {
+        // 从 nameServer 的 RouteInfoManager 中获取 BrokerClusterInfo
         ClusterInfo clusterInfoSerializeWrapper = adminExt.examineBrokerClusterInfo();
         Map<String/* brokerName */, BrokerData> brokerAddrTable = clusterInfoSerializeWrapper.getBrokerAddrTable();
         Iterator<Map.Entry<String, BrokerData>> it = brokerAddrTable.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<String, BrokerData> entry = it.next();
+            // key:brokerId,value:brokerAddr
             HashMap<Long, String> brokerAddrs = entry.getValue().getBrokerAddrs();
             if (brokerAddrs.containsValue(addr)) {
                 return entry.getKey();

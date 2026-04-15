@@ -38,7 +38,9 @@ public class AclClientRPCHook implements RPCHook {
         if (sessionCredentials.getSecurityToken() != null) {
             request.addExtField(SessionCredentials.SECURITY_TOKEN, sessionCredentials.getSecurityToken());
         }
+        // requestHeader 与 requestBody ，ACCESS_KEY 的字节
         byte[] total = AclUtils.combineRequestContent(request, parseRequestContent(request));
+        // 用 SecretKey 签名
         String signature = AclUtils.calSignature(total, sessionCredentials.getSecretKey());
         request.addExtField(SessionCredentials.SIGNATURE, signature);
     }

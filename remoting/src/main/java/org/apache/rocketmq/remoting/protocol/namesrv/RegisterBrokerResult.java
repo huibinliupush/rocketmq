@@ -20,6 +20,7 @@ package org.apache.rocketmq.remoting.protocol.namesrv;
 import org.apache.rocketmq.remoting.protocol.body.KVTable;
 
 public class RegisterBrokerResult {
+    // 如果注册的 broker 是 slave，那么就在 result 中告知 MasterAddr，masterHaServerAddr
     private String haServerAddr;
     private String masterAddr;
     private KVTable kvTable;

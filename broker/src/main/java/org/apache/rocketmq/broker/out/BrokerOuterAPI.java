@@ -219,12 +219,52 @@ public class BrokerOuterAPI {
     public List<String> dnsLookupAddressByDomain(String domain) {
         List<String> addressList = new ArrayList<>();
         try {
+            // java 提供的 DNS 缓存
+            // DNS 正向缓存时间 ，用于存放成功解析的结果
+            // networkaddress.cache.negative.ttl(否定缓存)用于存放解析失败的域名，默认缓存时间是 10 秒，避免了对不存在域名的反复无效查询
             java.security.Security.setProperty("networkaddress.cache.ttl", "10");
             int index = domain.indexOf(":");
             String portStr = domain.substring(index); // :port
             String domainStr = domain.substring(0, index);
+            // 通过域名查找, 1.查询本地 DNS 缓存(java) 2.本地 hosts 文件 3.DNS 服务器查询
+            /**
+             * 配置本地 host 文件：/etc/hosts
+             * IP地址 主机名1 [主机名2 ...]
+             * 分隔符：IP地址和主机名之间使用空格或制表符分隔即可
+             * 多主机名：可以将多个主机名映射到同一个IP，用空格分开
+             * 127.0.0.1   myapp.local
+             * 192.168.1.100   dev-server.example.com   dev-server（同一 ip 映射到多个域名）
+             * 这会将 myapp.local 指向本机，将 dev-server.example.com 和 dev-server 指向局域网的另一台设备
+             * 验证修改是否生效：ping myapp.local
+             * DNS 缓存未刷新：
+             * # 对于使用 systemd-resolved 的系统
+             * sudo systemd-resolve --flush-caches
+             * # 或者重启网络服务
+             * sudo systemctl restart NetworkManager
+             * */
+
+            /**
+             * 配置 DNS 服务器（DNS 服务端口为 53）
+             * 作为“客户端”：配置本机使用指定的 DNS 服务器，来解析域名（这也是最常见的需求）。
+             *
+             * 作为“服务器”：在 Linux 上搭建一个 DNS 服务端，为局域网内的其他设备提供域名解析服务。
+             *
+             * /etc/systemd/resolved.conf 找到 [Resolve] 部分，设置你的 DNS 服务器。多个地址请用空格隔开
+             * [Resolve]
+             * DNS=8.8.8.8 1.1.1.1
+             * DNS：指定主要的 DNS 服务器。系统会优先使用这里的设置
+             *
+             * 重启服务使配置生效
+             * sudo systemctl restart systemd-resolved
+             *
+             * 验证配置是否成功
+             * resolvectl status
+             * 在输出中，你应该能看到刚才配置的 DNS 服务器地址出现在了 Global 部分
+             *
+             * */
             InetAddress[] addresses = InetAddress.getAllByName(domainStr);
             for (InetAddress address : addresses) {
+                // 重新拼接 ip:port
                 addressList.add(address.getHostAddress() + portStr);
             }
             LOGGER.info("dns lookup address by domain success, domain={}, result={}", domain, addressList);
@@ -490,18 +530,20 @@ public class BrokerOuterAPI {
         final String brokerAddr,
         final String brokerName,
         final long brokerId,
-        final String haServerAddr,
+        final String haServerAddr, // brokerIP2 : HAlistenPort
         final TopicConfigSerializeWrapper topicConfigWrapper,
-        final List<String> filterServerList,
+        final List<String> filterServerList, // null
         final boolean oneway,
-        final int timeoutMills,
+        final int timeoutMills,// 24s
         final boolean enableActingMaster,
         final boolean compressed,
-        final Long heartbeatTimeoutMillis,
+        final Long heartbeatTimeoutMillis,// 10s ,isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null
         final BrokerIdentity brokerIdentity) {
 
         final List<RegisterBrokerResult> registerBrokerResultList = new CopyOnWriteArrayList<>();
+        // 获取所有 nameServer 地址
         List<String> nameServerAddressList = this.remotingClient.getAvailableNameSrvList();
+        // 向所有 nameServer 进行注册
         if (nameServerAddressList != null && nameServerAddressList.size() > 0) {
 
             final RegisterBrokerRequestHeader requestHeader = new RegisterBrokerRequestHeader();
@@ -513,12 +555,15 @@ public class BrokerOuterAPI {
             requestHeader.setEnableActingMaster(enableActingMaster);
             requestHeader.setCompressed(false);
             if (heartbeatTimeoutMillis != null) {
-                requestHeader.setHeartbeatTimeoutMillis(heartbeatTimeoutMillis);
+                requestHeader.setHeartbeatTimeoutMillis(heartbeatTimeoutMillis);// 10s ,isEnableSlaveActingMaster() ? this.brokerConfig.getBrokerNotActiveTimeoutMillis() : null
             }
 
             RegisterBrokerBody requestBody = new RegisterBrokerBody();
+            // 向 nameServer 注册本机 broker 的 topicConfig,TopicQueueMappingInfo(static topic)
             requestBody.setTopicConfigSerializeWrapper(TopicConfigAndMappingSerializeWrapper.from(topicConfigWrapper));
             requestBody.setFilterServerList(filterServerList);
+            // compressed = false, 不对 body 进行 compress
+            // compressed = true. 将 requestBody 序列化到 DeflaterOutputStream
             final byte[] body = requestBody.encode(compressed);
             final int bodyCrc32 = UtilAll.crc32(body);
             requestHeader.setBodyCrc32(bodyCrc32);
@@ -546,7 +591,7 @@ public class BrokerOuterAPI {
             }
 
             try {
-                // 等待全部注册结果
+                // 等待全部注册结果，等待 24s
                 if (!countDownLatch.await(timeoutMills, TimeUnit.MILLISECONDS)) {
                     LOGGER.warn("Registration to one or more name servers does NOT complete within deadline. Timeout threshold: {}ms", timeoutMills);
                 }
@@ -583,9 +628,11 @@ public class BrokerOuterAPI {
             case ResponseCode.SUCCESS: {
                 RegisterBrokerResponseHeader responseHeader = response.decodeCommandCustomHeader(RegisterBrokerResponseHeader.class);
                 RegisterBrokerResult result = new RegisterBrokerResult();
+                // 如果注册的 broker 是 slave ， 那么 nameserver 就会返回 master信息
                 result.setMasterAddr(responseHeader.getMasterAddr());
                 result.setHaServerAddr(responseHeader.getHaServerAddr());
                 if (response.getBody() != null) {
+                    // 所有 orderTopic 的 orderConf
                     result.setKvTable(KVTable.decode(response.getBody(), KVTable.class));
                 }
                 return result;

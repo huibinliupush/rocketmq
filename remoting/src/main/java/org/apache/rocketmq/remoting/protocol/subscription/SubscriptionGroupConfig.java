@@ -36,10 +36,13 @@ public class SubscriptionGroupConfig {
     private int retryQueueNums = 1;
 
     private int retryMaxTimes = 16;
+    // 重试策略
     private GroupRetryPolicy groupRetryPolicy = new GroupRetryPolicy();
-
+    // brokerId，建议从哪个 broker 消费，但指定为 slave broker 时，需开启 slaveReadEnable
+    // 默认为 master
     private long brokerId = MixAll.MASTER_ID;
-
+    // whichBrokerWhenConsumeSlowly ， 如果Broker建议从slave消费，配置决定从哪个slave消费
+    // 默认为 1
     private long whichBrokerWhenConsumeSlowly = 1;
 
     private boolean notifyConsumerIdsChangedEnable = true;

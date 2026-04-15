@@ -41,7 +41,9 @@ import org.apache.rocketmq.remoting.rpc.TopicQueueRequestHeader;
 import org.apache.rocketmq.remoting.rpc.TopicRequestHeader;
 
 import static org.apache.rocketmq.remoting.protocol.RemotingCommand.buildErrorResponse;
-
+// updateAndCreateStaticTopic  的时候创建， see :UpdateStaticTopicSubCommand (admin 命令)
+// static topic 元数据管理（TopicQueueMapping）来维护逻辑与物理队列的映射关系，并保证一致性
+// https://chat.deepseek.com/a/chat/s/922add6b-b222-4e2f-93ea-ab593f4f9e40
 public class TopicQueueMappingManager extends ConfigManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final long LOCK_TIMEOUT_MILLIS = 3000;
@@ -57,7 +59,9 @@ public class TopicQueueMappingManager extends ConfigManager {
     public TopicQueueMappingManager(BrokerController brokerController) {
         this.brokerController = brokerController;
     }
-
+    // updateAndCreateStaticTopic  的时候创建， see :UpdateStaticTopicSubCommand (admin 命令)
+    // static topic 元数据管理（TopicQueueMapping）来维护逻辑与物理队列的映射关系，并保证一致性
+    // https://chat.deepseek.com/a/chat/s/922add6b-b222-4e2f-93ea-ab593f4f9e40
     public void updateTopicQueueMapping(TopicQueueMappingDetail newDetail, boolean force, boolean isClean, boolean flush) throws Exception {
         boolean locked = false;
         boolean updated = false;

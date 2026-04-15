@@ -256,6 +256,7 @@ public class NamesrvController {
         }
         // name server 的路由信息管理
         // 启动 BatchUnregistrationService ，a mechanism to unregister brokers in batch manner, which speeds up broker-offline
+        // 清理 brokerLiveTable，filterServerTable，brokerAddrTable（BrokerData）,clusterAddrTable,topicQueueTable
         this.routeInfoManager.start();
     }
 

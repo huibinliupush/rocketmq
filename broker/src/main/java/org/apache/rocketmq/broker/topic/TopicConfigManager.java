@@ -66,6 +66,7 @@ public class TopicConfigManager extends ConfigManager {
 
     private transient final Lock topicConfigTableLock = new ReentrantLock();
     // 加载自 System.getProperty("user.home") + File.separator + "store" /config/topics.json
+    // ./admin updateTopic 创建的 topic 会缓存在这里，并在 topics.json 文件持久化
     protected ConcurrentMap<String, TopicConfig> topicConfigTable = new ConcurrentHashMap<>(1024);
     // 每次选主之后会改变
     protected DataVersion dataVersion = new DataVersion();
@@ -526,6 +527,7 @@ public class TopicConfigManager extends ConfigManager {
 
     public void updateTopicConfig(final TopicConfig topicConfig) {
         updateSingleTopicConfigWithoutPersist(topicConfig);
+        // user.home/store/config/topics.json
         this.persist(topicConfig.getTopicName(), topicConfig);
     }
 
@@ -562,11 +564,13 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     public void updateOrderTopicConfig(final KVTable orderKVTableFromNs) {
-
+        // orderKVTableFromNs : name server 会返回所有 orderTopic 的 orderConfig(不管topic在不在该broker上)
         if (orderKVTableFromNs != null && orderKVTableFromNs.getTable() != null) {
             boolean isChange = false;
+            // 所有 orderTopic
             Set<String> orderTopics = orderKVTableFromNs.getTable().keySet();
             for (String topic : orderTopics) {
+                // 本机 broker 中存在的 orderTopic
                 TopicConfig topicConfig = getTopicConfig(topic);
                 if (topicConfig != null && !topicConfig.isOrder()) {
                     topicConfig.setOrder(true);
@@ -577,6 +581,7 @@ public class TopicConfigManager extends ConfigManager {
 
             if (isChange) {
                 updateDataVersion();
+                // 更新 topics.json 文件
                 this.persist();
             }
         }

@@ -31,6 +31,8 @@ public class BrokerConfig extends BrokerIdentity {
     private String brokerConfigPath = null;
 
     private String rocketmqHome = System.getProperty(MixAll.ROCKETMQ_HOME_PROPERTY, System.getenv(MixAll.ROCKETMQ_HOME_ENV));
+    // 如果开启 DNS 查询，这里指定的就是 domain:port
+    // 可通过 admin 命令 updateBrokerConfig 修改
     @ImportantField
     private String namesrvAddr = System.getProperty(MixAll.NAMESRV_ADDR_PROPERTY, System.getenv(MixAll.NAMESRV_ADDR_ENV));
 
