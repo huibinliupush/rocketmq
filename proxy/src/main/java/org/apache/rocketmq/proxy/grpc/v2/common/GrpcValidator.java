@@ -104,6 +104,7 @@ public class GrpcValidator {
             if (StringUtils.isBlank(tag)) {
                 throw new GrpcProxyException(Code.ILLEGAL_MESSAGE_TAG, "tag cannot be the char sequence of whitespace");
             }
+            // 每个消息只能设置一个 tag
             if (tag.contains("|")) {
                 throw new GrpcProxyException(Code.ILLEGAL_MESSAGE_TAG, "tag cannot contain '|'");
             }

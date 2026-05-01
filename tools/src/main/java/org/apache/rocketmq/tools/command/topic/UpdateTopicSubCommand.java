@@ -116,6 +116,7 @@ public class UpdateTopicSubCommand implements SubCommand {
                 String attributesModification = commandLine.getOptionValue('a').trim();
                 // +key1=value1,+key2=value2,-key3,+key4=value4
                 // key3 的 value 为 空 ""
+                // map 中的 key  带 + ，-
                 Map<String, String> attributes = AttributeParser.parseToMap(attributesModification);
                 topicConfig.setAttributes(attributes);
             }

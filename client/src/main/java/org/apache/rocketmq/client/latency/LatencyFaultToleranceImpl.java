@@ -35,9 +35,10 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
     private final static Logger log = LoggerFactory.getLogger(MQFaultStrategy.class);
     private final ConcurrentHashMap<String, FaultItem> faultItemTable = new ConcurrentHashMap<String, FaultItem>(16);
     private int detectTimeout = 200;
+    // detectInterval = 2 * 1000;
     private int detectInterval = 2000;
     private final ThreadLocalIndex whichItemWorst = new ThreadLocalIndex();
-
+    // startDetectorEnable = false
     private volatile boolean startDetectorEnable = false;
     private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
         @Override
@@ -49,7 +50,9 @@ public class LatencyFaultToleranceImpl implements LatencyFaultTolerance<String> 
     private final Resolver resolver;
 
     private final ServiceDetector serviceDetector;
-
+    // Resolver: name （副本集）对应的 master address
+    // ServiceDetector: Detect whether the remote service state is normal
+    // see : org.apache.rocketmq.proxy.service.route.TopicRouteService.TopicRouteService
     public LatencyFaultToleranceImpl(Resolver resolver, ServiceDetector serviceDetector) {
         this.resolver = resolver;
         this.serviceDetector = serviceDetector;

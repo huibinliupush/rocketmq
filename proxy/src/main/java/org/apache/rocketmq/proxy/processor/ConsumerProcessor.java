@@ -64,7 +64,7 @@ import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 
 public class ConsumerProcessor extends AbstractProcessor {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
-
+    // consumerProcessorExecutor , PROCESSOR_NUMBER, 10000
     private final ExecutorService executor;
 
     public ConsumerProcessor(MessagingProcessor messagingProcessor, ServiceManager serviceManager,

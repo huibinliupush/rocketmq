@@ -29,6 +29,7 @@ public class ContextInitPipeline implements RequestPipeline {
     @Override
     public void execute(ProxyContext context, Metadata headers, GeneratedMessageV3 request) {
         Context ctx = Context.current();
+        // 设置 ProxyContext
         context.setLocalAddress(getDefaultStringMetadataInfo(headers, GrpcConstants.LOCAL_ADDRESS))
             .setRemoteAddress(getDefaultStringMetadataInfo(headers, GrpcConstants.REMOTE_ADDRESS))
             .setClientID(getDefaultStringMetadataInfo(headers, GrpcConstants.CLIENT_ID))

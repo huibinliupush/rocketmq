@@ -33,11 +33,14 @@ import org.apache.rocketmq.store.config.MessageStoreConfig;
 
 public class MessageExtEncoder {
     protected static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
+    // 64k(maxMessageProperties) + 4M(maxMessageBody)
+    // 64K + 4M
     private ByteBuf byteBuf;
-    // The maximum length of the message body.
+    // The maximum length of the message body.（4M）
     private int maxMessageBodySize;
-    // The maximum length of the full message.
+    // The maximum length of the full message. 64k + 4M
     private int maxMessageSize;
+    // 0  默认不开启 messageProperty 的 crc 校验
     private final int crc32ReservedLength;
     private MessageStoreConfig messageStoreConfig;
 
@@ -49,11 +52,12 @@ public class MessageExtEncoder {
         ByteBufAllocator alloc = UnpooledByteBufAllocator.DEFAULT;
         this.messageStoreConfig = messageStoreConfig;
         this.maxMessageBodySize = messageStoreConfig.getMaxMessageSize();
-        //Reserve 64kb for encoding buffer outside body
+        //Reserve 64kb for encoding buffer outside body(message properties)
         int maxMessageSize = Integer.MAX_VALUE - maxMessageBodySize >= 64 * 1024 ?
             maxMessageBodySize + 64 * 1024 : Integer.MAX_VALUE;
         byteBuf = alloc.directBuffer(maxMessageSize);
         this.maxMessageSize = maxMessageSize;
+        // enabledAppendPropCRC = false，默认不开启 messageProperty 的 crc 校验
         this.crc32ReservedLength = messageStoreConfig.isEnabledAppendPropCRC() ? CommitLog.CRC32_RESERVED_LEN : 0;
     }
 
@@ -173,6 +177,8 @@ public class MessageExtEncoder {
     }
 
     public PutMessageResult encode(MessageExtBrokerInner msgInner) {
+        // 64k(maxMessageProperties) + 4M(maxMessageBody)
+        // 64K + 4M
         this.byteBuf.clear();
 
         if (messageStoreConfig.isEnableLmq() && msgInner.needDispatchLMQ()) {
@@ -184,10 +190,10 @@ public class MessageExtEncoder {
          */
         final byte[] propertiesData =
             msgInner.getPropertiesString() == null ? null : msgInner.getPropertiesString().getBytes(MessageDecoder.CHARSET_UTF8);
-
+        // 默认不开启 messageProperty 的 crc 校验
         boolean needAppendLastPropertySeparator = crc32ReservedLength > 0 && propertiesData != null && propertiesData.length > 0
             && propertiesData[propertiesData.length - 1] != MessageDecoder.PROPERTY_SEPARATOR;
-
+        // propertiesData.length
         final int propertiesLength = (propertiesData == null ? 0 : propertiesData.length) + (needAppendLastPropertySeparator ? 1 : 0) + crc32ReservedLength;
 
         if (propertiesLength > Short.MAX_VALUE) {
@@ -199,10 +205,11 @@ public class MessageExtEncoder {
         final int topicLength = topicData.length;
 
         final int bodyLength = msgInner.getBody() == null ? 0 : msgInner.getBody().length;
+        // 计算消息序列化之后的大小
         final int msgLen = calMsgLength(
             msgInner.getVersion(), msgInner.getSysFlag(), bodyLength, topicLength, propertiesLength);
 
-        // Exceeds the maximum message body
+        // Exceeds the maximum message body 4M
         if (bodyLength > this.maxMessageBodySize) {
             CommitLog.log.warn("message body size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLength
                 + ", maxMessageSize: " + this.maxMessageBodySize);
@@ -211,7 +218,7 @@ public class MessageExtEncoder {
 
         final long queueOffset = msgInner.getQueueOffset();
 
-        // Exceeds the maximum message
+        // Exceeds the maximum message 64k + 4M
         if (msgLen > this.maxMessageSize) {
             CommitLog.log.warn("message size exceeded, msg total size: " + msgLen + ", msg body size: " + bodyLength
                 + ", maxMessageSize: " + this.maxMessageSize);
@@ -228,9 +235,9 @@ public class MessageExtEncoder {
         this.byteBuf.writeInt(msgInner.getQueueId());
         // 5 FLAG
         this.byteBuf.writeInt(msgInner.getFlag());
-        // 6 QUEUEOFFSET
+        // 6 QUEUEOFFSET 消息写入 commitlog 之前，获取指定 consumequeue 的 maxIndex (topic-queue lock)
         this.byteBuf.writeLong(queueOffset);
-        // 7 PHYSICALOFFSET, need update later
+        // 7 PHYSICALOFFSET, need update later，消息写入commitlog 之后更新
         this.byteBuf.writeLong(0);
         // 8 SYSFLAG
         this.byteBuf.writeInt(msgInner.getSysFlag());
@@ -421,6 +428,7 @@ public class MessageExtEncoder {
         private final StringBuilder keyBuilder;
 
         PutMessageThreadLocal(MessageStoreConfig messageStoreConfig) {
+            // 用于序列化 msg,后续会将序列化之后的消息 bytes 写入 commitlog
             encoder = new MessageExtEncoder(messageStoreConfig);
             keyBuilder = new StringBuilder();
         }

@@ -254,6 +254,7 @@ public class MessageStoreConfig {
     private boolean warmMapedFileEnable = false;
     private boolean offsetCheckInSlave = false;
     private boolean debugLockEnable = false;
+    // true 表示不需要 HandleHA
     private boolean duplicationEnable = false;
     private boolean diskFallRecorded = true;
     private long osPageCacheBusyTimeOutMills = 1000;
@@ -347,13 +348,19 @@ public class MessageStoreConfig {
      * The master broker is considered one of the in-sync replicas, and it's included in the count of total.
      * If a master broker is ASYNC_MASTER, inSyncReplicas will be ignored.
      * If enableControllerMode is true and ackAckInSyncStateSet is true, inSyncReplicas will be ignored.
+     *
      */
+    // SyncReplicas 表示消息写入之后，需要同步到副本集中的 broker 个数，master 也算在 SyncReplicas 中
+    // inSyncReplicas = 1 表示只要写入 master 就可以了
+    // If a master broker is ASYNC_MASTER, inSyncReplicas will be ignored.
+    // 这也是为什么 controller 选主之后，master 角色设置为 SYNC_MASTER 的原因
     @ImportantField
     private int inSyncReplicas = 1;
 
     /**
      * Will be worked in auto multiple replicas mode, to provide minimum in-sync replicas.
      * It is still valid in controller mode.
+     * 规定 syncStateSet 的最小数量
      */
     @ImportantField
     private int minInSyncReplicas = 1;

@@ -294,13 +294,19 @@ public class ProxyConfig implements ConfigFile {
     }
 
     public int computeDelayLevel(long timeMillis) {
+        // 延时时间
         long intervalMillis = timeMillis - System.currentTimeMillis();
+        // 1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
+        // 共 18 个 delayLevel
         List<Map.Entry<Integer, Long>> sortedLevels = delayLevelTable.entrySet().stream().sorted(Comparator.comparingLong(Map.Entry::getValue)).collect(Collectors.toList());
         for (Map.Entry<Integer, Long> entry : sortedLevels) {
             if (entry.getValue() > intervalMillis) {
+                // 例如 延时时间小于 1s 那么 delayLevel 就是 1
+                // 例如 延时时间小于 5s 那么 delayLevel 就是 2
                 return entry.getKey();
             }
         }
+        // 如果延时超过 2h 那么 delayLevel 也只能是 2h 对应的 level
         return sortedLevels.get(sortedLevels.size() - 1).getKey();
     }
 

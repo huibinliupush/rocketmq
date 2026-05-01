@@ -227,6 +227,7 @@ public class BrokerController {
     protected ScheduledExecutorService syncBrokerMemberGroupExecutorService;
     protected ScheduledExecutorService brokerHeartbeatExecutorService;
     protected final SlaveSynchronize slaveSynchronize;
+    // 10000
     protected final BlockingQueue<Runnable> sendThreadPoolQueue;
     protected final BlockingQueue<Runnable> putThreadPoolQueue;
     protected final BlockingQueue<Runnable> ackThreadPoolQueue;
@@ -392,7 +393,9 @@ public class BrokerController {
         // 通知 long polling
         this.messageArrivingListener = new NotifyMessageArrivingListener(this.pullRequestHoldService, this.popMessageProcessor, this.notificationProcessor);
         this.consumerIdsChangeListener = new DefaultConsumerIdsChangeListener(this);
+        // 管理连接到 broker 的所有 consumer （consumer 通过 heartBeat 向 producerManager 注册）
         this.consumerManager = new ConsumerManager(this.consumerIdsChangeListener, this.brokerStatsManager, this.brokerConfig);
+        // 管理连接到 broker 的所有 producer （producer 通过 heartBeat 向 producerManager 注册）
         this.producerManager = new ProducerManager(this.brokerStatsManager);
         this.consumerFilterManager = new ConsumerFilterManager(this);
         this.consumerOrderInfoManager = new ConsumerOrderInfoManager(this);
@@ -414,8 +417,9 @@ public class BrokerController {
         // broker 作为 slave 的时候，向 master 同步日志(old version ha)
         this.slaveSynchronize = new SlaveSynchronize(this);
         this.endTransactionProcessor = new EndTransactionProcessor(this);
-
+        // 10000
         this.sendThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getSendThreadPoolQueueCapacity());
+        // 10000
         this.putThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getPutThreadPoolQueueCapacity());
         this.pullThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getPullThreadPoolQueueCapacity());
         this.litePullThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getLitePullThreadPoolQueueCapacity());
@@ -425,6 +429,7 @@ public class BrokerController {
         this.queryThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getQueryThreadPoolQueueCapacity());
         this.clientManagerThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getClientManagerThreadPoolQueueCapacity());
         this.consumerManagerThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getConsumerManagerThreadPoolQueueCapacity());
+        // 50000
         this.heartbeatThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getHeartbeatThreadPoolQueueCapacity());
         this.endTransactionThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getEndTransactionPoolQueueCapacity());
         this.adminBrokerThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getAdminBrokerThreadPoolQueueCapacity());
@@ -539,11 +544,11 @@ public class BrokerController {
             new ThreadFactoryImpl("BrokerControllerScheduledThread", true, getBrokerIdentity()));
 
         this.sendMessageExecutor = ThreadUtils.newThreadPoolExecutor(
-            this.brokerConfig.getSendMessageThreadPoolNums(),
+            this.brokerConfig.getSendMessageThreadPoolNums(),// Math.min(PROCESSOR_NUMBER, 4)
             this.brokerConfig.getSendMessageThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
-            this.sendThreadPoolQueue,
+            this.sendThreadPoolQueue,// 10000
             new ThreadFactoryImpl("SendMessageThread_", getBrokerIdentity()));
 
         this.pullMessageExecutor = ThreadUtils.newThreadPoolExecutor(
@@ -563,11 +568,11 @@ public class BrokerController {
             new ThreadFactoryImpl("LitePullMessageThread_", getBrokerIdentity()));
 
         this.putMessageFutureExecutor = ThreadUtils.newThreadPoolExecutor(
-            this.brokerConfig.getPutMessageFutureThreadPoolNums(),
+            this.brokerConfig.getPutMessageFutureThreadPoolNums(),// Math.min(PROCESSOR_NUMBER, 4)
             this.brokerConfig.getPutMessageFutureThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
-            this.putThreadPoolQueue,
+            this.putThreadPoolQueue, // 10000
             new ThreadFactoryImpl("PutMessageThread_", getBrokerIdentity()));
 
         this.ackMessageExecutor = ThreadUtils.newThreadPoolExecutor(
@@ -603,11 +608,11 @@ public class BrokerController {
             new ThreadFactoryImpl("ClientManageThread_", getBrokerIdentity()));
 
         this.heartbeatExecutor = ThreadUtils.newThreadPoolExecutor(
-            this.brokerConfig.getHeartbeatThreadPoolNums(),
+            this.brokerConfig.getHeartbeatThreadPoolNums(),//  Math.min(32, PROCESSOR_NUMBER)
             this.brokerConfig.getHeartbeatThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
-            this.heartbeatThreadPoolQueue,
+            this.heartbeatThreadPoolQueue,// 50000
             new ThreadFactoryImpl("HeartbeatThread_", true, getBrokerIdentity()));
 
         this.consumerManageExecutor = ThreadUtils.newThreadPoolExecutor(

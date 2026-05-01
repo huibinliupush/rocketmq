@@ -93,7 +93,7 @@ public class AutoSwitchHAService extends DefaultHAService {
         this.defaultMessageStore = defaultMessageStore;
         // 用于接收 slave 的连接，存储在 org.apache.rocketmq.store.ha.DefaultHAService.connectionList
         this.acceptSocketService = new AutoSwitchAcceptSocketService(defaultMessageStore.getMessageStoreConfig());
-        // 向 slave 传输 commitlog
+        // 用于判断是否向 slave 传输 commitlog 完毕
         this.groupTransferService = new GroupTransferService(this, defaultMessageStore);
         this.haConnectionStateNotificationService = new HAConnectionStateNotificationService(this, defaultMessageStore);
     }
@@ -401,6 +401,7 @@ public class AutoSwitchHAService extends DefaultHAService {
     public int inSyncReplicasNums(final long masterPutWhere) {
         this.readLock.lock();
         try {
+            // 是否正在向 controller 同步 SyncStateSet
             if (this.isSynchronizingSyncStateSet) {
                 return Math.max(this.syncStateSet.size(), this.remoteSyncStateSet.size());
             } else {

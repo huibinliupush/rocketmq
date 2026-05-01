@@ -916,6 +916,7 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
     @Override
     public void assignQueueOffset(QueueOffsetOperator queueOffsetOperator, MessageExtBrokerInner msg) {
         String topicQueueKey = getTopic() + "-" + getQueueId();
+        // 当前 messageQueue 中最大的消息 index
         long queueOffset = queueOffsetOperator.getQueueOffset(topicQueueKey);
         msg.setQueueOffset(queueOffset);
     }

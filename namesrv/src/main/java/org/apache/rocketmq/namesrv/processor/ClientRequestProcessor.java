@@ -58,9 +58,9 @@ public class ClientRequestProcessor implements NettyRequestProcessor {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
         final GetRouteInfoRequestHeader requestHeader =
             (GetRouteInfoRequestHeader) request.decodeCommandCustomHeader(GetRouteInfoRequestHeader.class);
-
+        // waitSecondsForService = 45, nameserver 启动之后 45s 之后 ready
         boolean namesrvReady = System.currentTimeMillis() - startupTimeMillis >= TimeUnit.SECONDS.toMillis(namesrvController.getNamesrvConfig().getWaitSecondsForService());
-
+        // needWaitForService = false
         if (namesrvController.getNamesrvConfig().isNeedWaitForService() && !namesrvReady) {
             log.warn("name server not ready. request code {} ", request.getCode());
             response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -71,6 +71,7 @@ public class ClientRequestProcessor implements NettyRequestProcessor {
         TopicRouteData topicRouteData = this.namesrvController.getRouteInfoManager().pickupTopicRouteData(requestHeader.getTopic());
 
         if (topicRouteData != null) {
+            // false
             if (this.namesrvController.getNamesrvConfig().isOrderMessageEnable()) {
                 String orderTopicConf =
                     this.namesrvController.getKvConfigManager().getKVConfig(NamesrvUtil.NAMESPACE_ORDER_TOPIC_CONFIG,

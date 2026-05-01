@@ -38,6 +38,7 @@ import org.apache.rocketmq.remoting.protocol.ResponseCode;
 public class GrpcChannelManager implements StartAndShutdown {
     private final ProxyRelayService proxyRelayService;
     private final GrpcClientSettingsManager grpcClientSettingsManager;
+    // 客户端发送 heartBeat 的时候进行填充
     protected final ConcurrentMap<String, GrpcClientChannel> clientIdChannelMap = new ConcurrentHashMap<>();
 
     protected final AtomicLong nonceIdGenerator = new AtomicLong(0);

@@ -408,6 +408,7 @@ public class ConsumeQueueStore extends AbstractConsumeQueueStore {
         if (null == map) {
             // 并发写入 ConcurrentMap 技巧
             ConcurrentMap<Integer, ConsumeQueueInterface> newMap = new ConcurrentHashMap<>(128);
+            // 这里可以使用 computeIfAbsent，将 newMap 的创建放入 compute 函数中，这样存在的话就不用创建 newMap 了
             ConcurrentMap<Integer, ConsumeQueueInterface> oldMap = consumeQueueTable.putIfAbsent(topic, newMap);
             if (oldMap != null) {
                 map = oldMap;

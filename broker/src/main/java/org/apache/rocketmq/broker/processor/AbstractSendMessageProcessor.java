@@ -372,12 +372,13 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
 
         Map<String, String> properties = MessageDecoder.string2messageProperties(requestHeader.getProperties());
         properties.put(MessageConst.PROPERTY_MSG_REGION, this.brokerController.getBrokerConfig().getRegionId());
+        // traceOn = true
         properties.put(MessageConst.PROPERTY_TRACE_SWITCH, String.valueOf(this.brokerController.getBrokerConfig().isTraceOn()));
         requestHeader.setProperties(MessageDecoder.messageProperties2String(properties));
-
+        // messageId
         String uniqueKey = properties.get(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX);
         sendMessageContext.setMsgUniqueKey(Optional.ofNullable(uniqueKey).orElse(""));
-
+        // MsgType
         if (properties.containsKey(MessageConst.PROPERTY_SHARDING_KEY)) {
             sendMessageContext.setMsgType(MessageType.Order_Msg);
         } else if (properties.containsKey(MessageConst.PROPERTY_DELAY_TIME_LEVEL)

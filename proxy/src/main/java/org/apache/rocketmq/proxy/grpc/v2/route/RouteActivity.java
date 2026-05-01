@@ -63,23 +63,29 @@ public class RouteActivity extends AbstractMessingActivity {
         CompletableFuture<QueryRouteResponse> future = new CompletableFuture<>();
         try {
             validateTopic(request.getTopic());
+            // proxy address
             List<org.apache.rocketmq.proxy.common.Address> addressList = this.convertToAddressList(request.getEndpoints());
 
             String topicName = request.getTopic().getName();
             ProxyTopicRouteData proxyTopicRouteData = this.messagingProcessor.getTopicRouteDataForProxy(
                 ctx, addressList, topicName);
-
+            // 所有副本集下所有 broker 中的所有 messageQueue
             List<MessageQueue> messageQueueList = new ArrayList<>();
+            // brokerName -> brokerId -> gRPC Broker, Endpoints 为 proxyAddressList
             Map<String, Map<Long, Broker>> brokerMap = buildBrokerMap(proxyTopicRouteData.getBrokerDatas());
-
+            // 获取 topic 的 messageType
             TopicMessageType topicMessageType = messagingProcessor.getMetadataService().getTopicMessageType(ctx, topicName);
+            // topicQueueTable 中 topic 下的所有 QueueData（所有副本集）
             for (QueueData queueData : proxyTopicRouteData.getQueueDatas()) {
                 String brokerName = queueData.getBrokerName();
+                // brokerId -> gRPC Broker, Endpoints 为 proxyAddressList
                 Map<Long, Broker> brokerIdMap = brokerMap.get(brokerName);
                 if (brokerIdMap == null) {
                     break;
                 }
+                // 副本集下所有的 broker
                 for (Broker broker : brokerIdMap.values()) {
+                    // 构建某一个 broker 中的所有 messageQueue
                     messageQueueList.addAll(this.genMessageQueueFromQueueData(queueData, request.getTopic(), topicMessageType, broker));
                 }
             }
@@ -188,7 +194,7 @@ public class RouteActivity extends AbstractMessingActivity {
     }
 
     protected List<org.apache.rocketmq.proxy.common.Address> convertToAddressList(Endpoints endpoints) {
-
+        // false
         boolean useEndpointPort = ConfigurationManager.getProxyConfig().isUseEndpointPortFromRequest();
 
         List<org.apache.rocketmq.proxy.common.Address> addressList = new ArrayList<>();
@@ -209,13 +215,17 @@ public class RouteActivity extends AbstractMessingActivity {
     protected Map<String /*brokerName*/, Map<Long /*brokerID*/, Broker>> buildBrokerMap(
         List<ProxyTopicRouteData.ProxyBrokerData> brokerDataList) {
         Map<String, Map<Long, Broker>> brokerMap = new HashMap<>();
+        // topicQueueTable 中 topic 下所有副本集 BrokerData
+        // 但是其中的 BrokerAddrs 发生了替换 key 依然是 brokerId, 但是 brokerAddr 变成 proxyAddressList
         for (ProxyTopicRouteData.ProxyBrokerData brokerData : brokerDataList) {
             Map<Long, Broker> brokerIdMap = new HashMap<>();
             String brokerName = brokerData.getBrokerName();
             for (Map.Entry<Long, List<org.apache.rocketmq.proxy.common.Address>> entry : brokerData.getBrokerAddrs().entrySet()) {
                 Long brokerId = entry.getKey();
+                // 转换为 gRPC  Address
                 List<Address> addressList = new ArrayList<>();
                 AddressScheme addressScheme = AddressScheme.IPv4;
+                // proxyAddressList
                 for (org.apache.rocketmq.proxy.common.Address address : entry.getValue()) {
                     addressScheme = AddressScheme.valueOf(address.getAddressScheme().name());
                     addressList.add(Address.newBuilder()
@@ -223,7 +233,7 @@ public class RouteActivity extends AbstractMessingActivity {
                         .setPort(address.getHostAndPort().getPort())
                         .build());
                 }
-
+                // gRPC Broker, Endpoints 为 proxyAddressList
                 Broker broker = Broker.newBuilder()
                     .setName(brokerName)
                     .setId(Math.toIntExact(brokerId))
@@ -239,13 +249,15 @@ public class RouteActivity extends AbstractMessingActivity {
         }
         return brokerMap;
     }
-
+    // QueueData 是按照副本集的粒度来划分的，Broker 是该副本集下的某一个 broker
     protected List<MessageQueue> genMessageQueueFromQueueData(QueueData queueData, Resource topic,
         TopicMessageType topicMessageType, Broker broker) {
         List<MessageQueue> messageQueueList = new ArrayList<>();
-
+        // readOnly queue nums
         int r = 0;
+        // writeOnly queue nums
         int w = 0;
+        // both readable and writable queue nums.
         int rw = 0;
         int n = 0;
         if (PermName.isWriteable(queueData.getPerm()) && PermName.isReadable(queueData.getPerm())) {

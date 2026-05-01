@@ -53,9 +53,13 @@ public class GrpcServerBuilder {
         serverBuilder.protocolNegotiator(new ProxyAndTlsProtocolNegotiator());
 
         // build server
+        // 1
         int bossLoopNum = ConfigurationManager.getProxyConfig().getGrpcBossLoopNum();
+        // PROCESSOR_NUMBER * 2
         int workerLoopNum = ConfigurationManager.getProxyConfig().getGrpcWorkerLoopNum();
+        // 130M
         int maxInboundMessageSize = ConfigurationManager.getProxyConfig().getGrpcMaxInboundMessageSize();
+        // 120s
         long idleTimeMills = ConfigurationManager.getProxyConfig().getGrpcClientIdleTimeMills();
 
         if (ConfigurationManager.getProxyConfig().isEnableGrpcEpoll()) {

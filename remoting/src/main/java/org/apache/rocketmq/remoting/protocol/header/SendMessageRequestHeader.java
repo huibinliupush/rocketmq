@@ -39,8 +39,11 @@ public class SendMessageRequestHeader extends TopicQueueRequestHeader {
     @CFNotNull
     @RocketMQResource(ResourceType.TOPIC)
     private String topic;
+    // AUTO_CREATE_TOPIC_KEY_TOPIC = "TBW102"
+    // 如果没有通过 admin 创建 topic 那么就会自动创建 topic
     @CFNotNull
     private String defaultTopic;
+    // 自动创建 topic 时指定的 QueueNums
     @CFNotNull
     private Integer defaultTopicQueueNums;
     @CFNotNull
@@ -51,12 +54,14 @@ public class SendMessageRequestHeader extends TopicQueueRequestHeader {
     private Long bornTimestamp;
     @CFNotNull
     private Integer flag;
+    // name1(NAME_VALUE_SEPARATOR)value2(PROPERTY_SEPARATOR)name1value2name1value2
     @CFNullable
     private String properties;
     @CFNullable
     private Integer reconsumeTimes;
     @CFNullable
     private Boolean unitMode;
+    // messageList.size() > 1 -> true
     @CFNullable
     private Boolean batch;
     private Integer maxReconsumeTimes;

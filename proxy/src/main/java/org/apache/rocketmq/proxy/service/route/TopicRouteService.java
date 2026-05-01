@@ -58,6 +58,7 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
 
     protected final LoadingCache<String /* topicName */, MessageQueueView> topicCache;
     protected final ScheduledExecutorService scheduledExecutorService;
+    // PROCESSOR_NUMBER
     protected final ThreadPoolExecutor cacheRefreshExecutor;
 
     public TopicRouteService(MQClientAPIFactory mqClientAPIFactory) {
@@ -66,24 +67,57 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
         this.scheduledExecutorService = ThreadUtils.newSingleThreadScheduledExecutor(
             new ThreadFactoryImpl("TopicRouteService_")
         );
+        // PROCESSOR_NUMBER
         this.cacheRefreshExecutor = ThreadPoolMonitor.createAndMonitor(
-            config.getTopicRouteServiceThreadPoolNums(),
+            config.getTopicRouteServiceThreadPoolNums(),// PROCESSOR_NUMBER
             config.getTopicRouteServiceThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
             "TopicRouteCacheRefresh",
-            config.getTopicRouteServiceThreadPoolQueueCapacity()
+            config.getTopicRouteServiceThreadPoolQueueCapacity()// 5000
         );
         this.mqClientAPIFactory = mqClientAPIFactory;
-
-        this.topicCache = Caffeine.newBuilder().maximumSize(config.getTopicRouteServiceCacheMaxNum())
-            .expireAfterAccess(config.getTopicRouteServiceCacheExpiredSeconds(), TimeUnit.SECONDS)
-            .refreshAfterWrite(config.getTopicRouteServiceCacheRefreshSeconds(), TimeUnit.SECONDS)
+        /**
+         * maximumSize: 当条目数超过限制时，会依据W-TinyLFU算法进行驱逐。
+         *
+         * refreshAfterWrite 是 Caffeine 缓存提供的一种 异步刷新 策略。它允许缓存的条目在写入后经过指定时间，变得 陈旧但尚未被移除，下次访问时会触发后台异步刷新，而访问者 立即获得旧值（不会等待刷新完成）。
+         *
+         * 这与 expireAfterWrite 有着本质区别：后者在过期后，下一次访问会 阻塞等待 重新加载新值（或返回 null/抛出异常）；而 refreshAfterWrite 则 永远不阻塞读请求，始终快速返回（旧值或刚刷新的新值）。
+         *
+         * refreshAfterWrite：
+         * 1. 入后 T1 时间内: 直接返回缓存值
+         * 2. 超过 T1 后第一次访问: 立即返回现有（可能过时的）值，同时触发后台异步加载新值
+         * 3. 后续访问: 在异步加载完成前，继续返回旧值；加载完成后，返回新值
+         *
+         * 仅当访问时触发：refreshAfterWrite 不会主动定时刷新，只有在 get 操作检测到上次写入时间已超过设定的刷新间隔时才会触发。
+         *
+         * build()（同步加载）: LoadingCache<String, User> cache = Caffeine.newBuilder...build ; User user = cache.get("alice")
+         * buildAsync()（异步加载）: AsyncLoadingCache<String, User> cache = Caffeine.newBuilder...buildAsync ; CompletableFuture<User> future = cache.get("alice");
+         *
+         * CacheLoader 是 Caffeine 中定义 如何从外部源加载数据 的核心接口。它与 LoadingCache 或 AsyncLoadingCache 配合，实现“当缓存中没有某个 key 时，自动调用 load 方法获取值并存入缓存”的语义。
+         *
+         * 简单说：CacheLoader 定义了缓存缺失时（或需要刷新时）的数据获取逻辑。
+         *
+         * 异步加载：AsyncCacheLoader,对于 I/O 密集型场景（网络、数据库），可以使用 AsyncCacheLoader，它返回 CompletableFuture<V>，避免阻塞调用线程。
+         *
+         * AsyncCacheLoader<String, User> loader = (key, executor) ->
+         *     CompletableFuture.supplyAsync(() -> userDao.findById(key), executor);
+         *
+         * AsyncLoadingCache<String, User> cache = Caffeine.newBuilder()
+         *     .buildAsync(loader);
+         *
+         * refreshAfterWrite 也完全支持 AsyncCacheLoader，刷新会在后台线程池执行
+         * */
+        this.topicCache = Caffeine.newBuilder().maximumSize(config.getTopicRouteServiceCacheMaxNum()) // 20000
+            .expireAfterAccess(config.getTopicRouteServiceCacheExpiredSeconds(), TimeUnit.SECONDS)// 300 ,最后一次访问后固定时长过期
+            .refreshAfterWrite(config.getTopicRouteServiceCacheRefreshSeconds(), TimeUnit.SECONDS)// 20
             .executor(cacheRefreshExecutor)
-            .build(new CacheLoader<String, MessageQueueView>() {
+            .build(new CacheLoader<String, MessageQueueView>() { // 同步加载
+                // 同步加载单个 key
                 @Override
                 public @Nullable MessageQueueView load(String topic) throws Exception {
                     try {
+                        // 从 name server 中获取 topic 下的 routedata
                         TopicRouteData topicRouteData = mqClientAPIFactory.getClient().getTopicRouteInfoFromNameServer(topic, Duration.ofSeconds(3).toMillis());
                         return buildMessageQueueView(topic, topicRouteData);
                     } catch (Exception e) {
@@ -93,7 +127,7 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
                         throw e;
                     }
                 }
-
+                // 同步刷新方法（极少直接覆盖）
                 @Override
                 public @Nullable MessageQueueView reload(@NonNull String key,
                     @NonNull MessageQueueView oldValue) throws Exception {
@@ -101,13 +135,17 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
                         return load(key);
                     } catch (Exception e) {
                         log.warn(String.format("reload topic route from namesrv. topic: %s", key), e);
+                        // 刷新失败，保留旧值
                         return oldValue;
                     }
                 }
             });
+        // Detect whether the remote service state is normal
         ServiceDetector serviceDetector = new ServiceDetector() {
+            // 检测对应 broker 是否拥有对应 topic
             @Override
             public boolean detect(String endpoint, long timeoutMillis) {
+                // pickup one topic in the topic cache
                 Optional<String> candidateTopic = pickTopic();
                 if (!candidateTopic.isPresent()) {
                     return false;
@@ -116,9 +154,11 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
                     GetMaxOffsetRequestHeader requestHeader = new GetMaxOffsetRequestHeader();
                     requestHeader.setTopic(candidateTopic.get());
                     requestHeader.setQueueId(0);
+                    // 获取 broker （endpoint）下 topic 下对应 queueid 的 maxOffset(index)
                     Long maxOffset = mqClientAPIFactory.getClient().getMaxOffset(endpoint, requestHeader, timeoutMillis).get();
                     return true;
                 } catch (Exception e) {
+                    // broker 没有该 topic
                     return false;
                 }
             }
@@ -127,6 +167,7 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
             @Override
             public String resolve(String name) {
                 try {
+                    // name （副本集）对应的 master address
                     String brokerAddr = getBrokerAddr(ProxyContext.createForInner("MQFaultStrategy"), name);
                     return brokerAddr;
                 } catch (Exception e) {
@@ -163,12 +204,16 @@ public abstract class TopicRouteService extends AbstractStartAndShutdown {
             this.mqFaultStrategy.startDetector();
         }
     }
-
+    // related to proxy's send strategy in cluster mode.
     public ClientConfig extractClientConfigFromProxyConfig(ProxyConfig proxyConfig) {
         ClientConfig tempClientConfig = new ClientConfig();
+        // sendLatencyEnable = false
         tempClientConfig.setSendLatencyEnable(proxyConfig.getSendLatencyEnable());
+        // startDetectorEnable = false
         tempClientConfig.setStartDetectorEnable(proxyConfig.getStartDetectorEnable());
+        // detectTimeout = 200
         tempClientConfig.setDetectTimeout(proxyConfig.getDetectTimeout());
+        // detectInterval = 2 * 1000;
         tempClientConfig.setDetectInterval(proxyConfig.getDetectInterval());
         return tempClientConfig;
     }

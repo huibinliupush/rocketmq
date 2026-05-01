@@ -53,6 +53,7 @@ import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfi
 
 public class GrpcClientSettingsManager extends ServiceThread implements StartAndShutdown {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
+    // 由 org.apache.rocketmq.proxy.grpc.v2.GrpcMessagingApplication.telemetry 填充 ClientSetting
     protected static final Map<String, Settings> CLIENT_SETTINGS_MAP = new ConcurrentHashMap<>();
 
     private final MessagingProcessor messagingProcessor;
@@ -67,6 +68,7 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
 
     public Settings getClientSettings(ProxyContext ctx) {
         String clientId = ctx.getClientID();
+        // 由 org.apache.rocketmq.proxy.grpc.v2.GrpcMessagingApplication.telemetry 填充 ClientSetting
         Settings settings = getRawClientSettings(clientId);
         if (settings == null) {
             return null;

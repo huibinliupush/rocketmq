@@ -56,6 +56,7 @@ import org.apache.rocketmq.remoting.protocol.header.SendMessageRequestHeader;
 
 public class ProducerProcessor extends AbstractProcessor {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
+    // producerProcessorExecutor , PROCESSOR_NUMBER, 10000
     private final ExecutorService executor;
     private final TopicMessageTypeValidator topicMessageTypeValidator;
 
@@ -84,6 +85,7 @@ public class ProducerProcessor extends AbstractProcessor {
                     }
                 }
             }
+            // 从 topic 对应的 MessageQueueView（所有副本集下的 messageQueue）选取队列
             messageQueue = queueSelector.select(ctx,
                 this.serviceManager.getTopicRouteService().getCurrentMessageQueueView(ctx, topic));
             if (messageQueue == null) {
@@ -91,6 +93,7 @@ public class ProducerProcessor extends AbstractProcessor {
             }
 
             for (Message msg : messageList) {
+                // 为每个消息生成 messageId :  ip,pid,MessageClientIDSetter-hashcode,当前时间与月初1号的时间差值（毫秒）,COUNTER
                 MessageClientIDSetter.setUniqID(msg);
             }
             SendMessageRequestHeader requestHeader = buildSendMessageRequestHeader(messageList, producerGroup, sysFlag, messageQueue.getQueueId());
@@ -112,7 +115,7 @@ public class ProducerProcessor extends AbstractProcessor {
                         }
                     }
                     return sendResultList;
-                }, this.executor)
+                }, this.executor)  // producerProcessorExecutor , PROCESSOR_NUMBER, 10000
                     .whenComplete((result, exception) -> {
                         long endTimestamp = System.currentTimeMillis();
                         if (exception != null) {
@@ -124,7 +127,7 @@ public class ProducerProcessor extends AbstractProcessor {
         } catch (Throwable t) {
             future.completeExceptionally(t);
         }
-        return FutureUtils.addExecutor(future, this.executor);
+        return FutureUtils.addExecutor(future, this.executor); // producerProcessorExecutor , PROCESSOR_NUMBER, 10000
     }
 
     public CompletableFuture<String> recallMessage(ProxyContext ctx, String topic,
@@ -185,8 +188,8 @@ public class ProducerProcessor extends AbstractProcessor {
 
         requestHeader.setProducerGroup(producerGroup);
         requestHeader.setTopic(message.getTopic());
-        requestHeader.setDefaultTopic(TopicValidator.AUTO_CREATE_TOPIC_KEY_TOPIC);
-        requestHeader.setDefaultTopicQueueNums(4);
+        requestHeader.setDefaultTopic(TopicValidator.AUTO_CREATE_TOPIC_KEY_TOPIC);// 如果没有通过 admin 创建 topic 那么就会自动创建 topic
+        requestHeader.setDefaultTopicQueueNums(4);// 自动创建 topic 时指定的 QueueNums
         requestHeader.setQueueId(queueId);
         requestHeader.setSysFlag(sysFlag);
         /*
@@ -205,12 +208,16 @@ public class ProducerProcessor extends AbstractProcessor {
             requestHeader.setBornTimestamp(System.currentTimeMillis());
         }
         requestHeader.setFlag(message.getFlag());
+        // name1(NAME_VALUE_SEPARATOR)value2(PROPERTY_SEPARATOR)name1value2name1value2
+        // NAME_VALUE_SEPARATOR = 1,PROPERTY_SEPARATOR=2
         requestHeader.setProperties(MessageDecoder.messageProperties2String(message.getProperties()));
         requestHeader.setReconsumeTimes(0);
         if (messageList.size() > 1) {
             requestHeader.setBatch(true);
         }
+        // retry topic
         if (requestHeader.getTopic().startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
+            // PROPERTY_RECONSUME_TIME
             String reconsumeTimes = MessageAccessor.getReconsumeTime(message);
             if (reconsumeTimes != null) {
                 requestHeader.setReconsumeTimes(Integer.valueOf(reconsumeTimes));
@@ -262,6 +269,7 @@ public class ProducerProcessor extends AbstractProcessor {
     }
 
     private boolean isNeedCheckTopicMessageType(Message message) {
+        // enableTopicMessageTypeCheck = true
         return ConfigurationManager.getProxyConfig().isEnableTopicMessageTypeCheck()
             && !message.hasProperty(MessageConst.PROPERTY_TRANSFER_FLAG);
     }

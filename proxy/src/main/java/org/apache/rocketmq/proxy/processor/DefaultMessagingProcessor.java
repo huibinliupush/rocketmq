@@ -80,20 +80,20 @@ public class DefaultMessagingProcessor extends AbstractStartAndShutdown implemen
     protected DefaultMessagingProcessor(ServiceManager serviceManager) { // LocalServiceManager
         ProxyConfig proxyConfig = ConfigurationManager.getProxyConfig();
         this.producerProcessorExecutor = ThreadPoolMonitor.createAndMonitor(
-            proxyConfig.getProducerProcessorThreadPoolNums(),
+            proxyConfig.getProducerProcessorThreadPoolNums(),// PROCESSOR_NUMBER
             proxyConfig.getProducerProcessorThreadPoolNums(),
             1,
             TimeUnit.MINUTES,
             "ProducerProcessorExecutor",
-            proxyConfig.getProducerProcessorThreadPoolQueueCapacity()
+            proxyConfig.getProducerProcessorThreadPoolQueueCapacity() // 10000
         );
         this.consumerProcessorExecutor = ThreadPoolMonitor.createAndMonitor(
-            proxyConfig.getConsumerProcessorThreadPoolNums(),
+            proxyConfig.getConsumerProcessorThreadPoolNums(),// PROCESSOR_NUMBER
             proxyConfig.getConsumerProcessorThreadPoolNums(),
             1,
             TimeUnit.MINUTES,
             "ConsumerProcessorExecutor",
-            proxyConfig.getConsumerProcessorThreadPoolQueueCapacity()
+            proxyConfig.getConsumerProcessorThreadPoolQueueCapacity()// 10000
         );
 
         this.serviceManager = serviceManager;

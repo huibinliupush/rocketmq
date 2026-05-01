@@ -80,7 +80,7 @@ public class SendMessageActivity extends AbstractMessingActivity {
                 ctx,
                 new SendMessageQueueSelector(request),
                 topic.getName(),
-                buildSysFlag(message),
+                buildSysFlag(message),// COMPRESSED_FLAG,TRANSACTION_PREPARED_TYPE
                 buildMessage(ctx, request.getMessagesList(), topic)
             ).thenApply(result -> convertToSendMessageResponse(ctx, request, result));
         } catch (Throwable t) {
@@ -102,16 +102,17 @@ public class SendMessageActivity extends AbstractMessingActivity {
         }
         return messageExtList;
     }
-
+    // here use topicName as producerGroup for transactional checker.
     protected Message buildMessage(ProxyContext context, apache.rocketmq.v2.Message protoMessage, String producerGroup) {
         String topicName = protoMessage.getTopic().getName();
-
+        // message body 不能超过 4M
         validateMessageBodySize(protoMessage.getBody());
         Message messageExt = new Message();
         messageExt.setTopic(topicName);
         messageExt.setBody(protoMessage.getBody().toByteArray());
+        // 将 request 中的 userProperties，SystemProperties 设置到 message property 中
         Map<String, String> messageProperty = this.buildMessageProperty(context, protoMessage, producerGroup);
-
+        // 统一设置到 org.apache.rocketmq.common.message.Message.properties
         MessageAccessor.setProperties(messageExt, messageProperty);
         return messageExt;
     }
@@ -137,6 +138,7 @@ public class SendMessageActivity extends AbstractMessingActivity {
                 throw new GrpcProxyException(Code.MESSAGE_BODY_EMPTY, "message body cannot be empty");
             }
         }
+        // 4M
         int max = ConfigurationManager.getProxyConfig().getMaxMessageSize();
         if (max <= 0) {
             return;
@@ -162,6 +164,7 @@ public class SendMessageActivity extends AbstractMessingActivity {
             if (StringUtils.isBlank(messageGroup)) {
                 throw new GrpcProxyException(Code.ILLEGAL_MESSAGE_GROUP, "message group cannot be the char sequence of whitespace");
             }
+            // messageGroup 长度不能超过 64 字节
             int maxSize = ConfigurationManager.getProxyConfig().getMaxMessageGroupSize();
             if (maxSize <= 0) {
                 return;
@@ -176,10 +179,12 @@ public class SendMessageActivity extends AbstractMessingActivity {
     }
 
     protected void validateDelayTime(long deliveryTimestampMs) {
+        // 1天
         long maxDelay = ConfigurationManager.getProxyConfig().getMaxDelayTimeMills();
         if (maxDelay <= 0) {
             return;
         }
+        // 延时时间超过 1天
         if (deliveryTimestampMs - System.currentTimeMillis() > maxDelay) {
             throw new GrpcProxyException(Code.ILLEGAL_DELIVERY_TIME, "the max delay time of message is too large, max is " + maxDelay);
         }
@@ -196,14 +201,18 @@ public class SendMessageActivity extends AbstractMessingActivity {
     }
 
     protected Map<String, String> buildMessageProperty(ProxyContext context, apache.rocketmq.v2.Message message, String producerGroup) {
+        // userProperty 的总字节数(key的字节数 + value 的字节数)
         long userPropertySize = 0;
         ProxyConfig config = ConfigurationManager.getProxyConfig();
+        // rocketmq message 模型
         org.apache.rocketmq.common.message.Message messageWithHeader = new org.apache.rocketmq.common.message.Message();
-        // set user properties
+        // set user properties，客户端自定义设置的消息属性
         Map<String, String> userProperties = message.getUserPropertiesMap();
+        // userPropertyMaxNum = 128
         if (userProperties.size() > config.getUserPropertyMaxNum()) {
             throw new GrpcProxyException(Code.MESSAGE_PROPERTIES_TOO_LARGE, "too many user properties, max is " + config.getUserPropertyMaxNum());
         }
+        // 用户设置的消息属性 key 不能包括系统属性 key
         for (Map.Entry<String, String> userPropertiesEntry : userProperties.entrySet()) {
             if (MessageConst.STRING_HASH_SET.contains(userPropertiesEntry.getKey())) {
                 throw new GrpcProxyException(Code.ILLEGAL_MESSAGE_PROPERTY_KEY, "property is used by system: " + userPropertiesEntry.getKey());
@@ -214,15 +223,18 @@ public class SendMessageActivity extends AbstractMessingActivity {
             if (GrpcValidator.getInstance().containControlCharacter(userPropertiesEntry.getValue())) {
                 throw new GrpcProxyException(Code.ILLEGAL_MESSAGE_PROPERTY_KEY, "the value of property cannot contain control character");
             }
+            // 统计用户自定义的消息属性占用总字节数
             userPropertySize += userPropertiesEntry.getKey().getBytes(StandardCharsets.UTF_8).length;
             userPropertySize += userPropertiesEntry.getValue().getBytes(StandardCharsets.UTF_8).length;
         }
+        // userProperties 原封不动的设置到 messageWithHeader（rocketmq message 模型） 中
         MessageAccessor.setProperties(messageWithHeader, Maps.newHashMap(userProperties));
 
-        // set tag
+        // set tag，gRPC 客户端会将消息的系统属性（将来要单独写入commitlog的属性）设置到 SystemProperties 中
+        // 每个消息只能设置一个 tag, 所以 tag 不能包含 |
         String tag = message.getSystemProperties().getTag();
         GrpcValidator.getInstance().validateTag(tag);
-        messageWithHeader.setTags(tag);
+        messageWithHeader.setTags(tag);// PROPERTY_TAGS
         userPropertySize += tag.getBytes(StandardCharsets.UTF_8).length;
 
         // set keys
@@ -232,14 +244,14 @@ public class SendMessageActivity extends AbstractMessingActivity {
             userPropertySize += key.getBytes(StandardCharsets.UTF_8).length;
         }
         if (keysList.size() > 0) {
-            messageWithHeader.setKeys(keysList);
+            messageWithHeader.setKeys(keysList);// PROPERTY_KEYS
         }
-
+        // maxUserPropertySize = 16 * 1024
         if (userPropertySize > config.getMaxUserPropertySize()) {
             throw new GrpcProxyException(Code.MESSAGE_PROPERTIES_TOO_LARGE, "the total size of user property is too large, max is " + config.getMaxUserPropertySize());
         }
 
-        // set message id
+        // set message id 由客户端进行设置
         String messageId = message.getSystemProperties().getMessageId();
         if (StringUtils.isBlank(messageId)) {
             throw new GrpcProxyException(Code.ILLEGAL_MESSAGE_ID, "message id cannot be empty");
@@ -260,14 +272,20 @@ public class SendMessageActivity extends AbstractMessingActivity {
         }
 
         // set delay level or deliver timestamp
+        // message property 中设置延时时间 or delayLevel(共18个等级)
         fillDelayMessageProperty(message, messageWithHeader);
 
         // set reconsume times
+        // Business code may failed to process messages for the moment. Hence, clients
+        // may request servers to deliver them again using certain back-off strategy,
+        // the attempt is 1 not 0 if message is delivered first time, and it is absent
+        // for message publishing.
+        // 消息发送的时候不会设置
         int reconsumeTimes = message.getSystemProperties().getDeliveryAttempt();
         MessageAccessor.setReconsumeTime(messageWithHeader, String.valueOf(reconsumeTimes));
-        // set producer group
+        // set producer group 默认为 topicName
         MessageAccessor.putProperty(messageWithHeader, MessageConst.PROPERTY_PRODUCER_GROUP, producerGroup);
-        // set message group
+        // set message group，  messageGroup 长度不能超过 64 字节
         String messageGroup = message.getSystemProperties().getMessageGroup();
         if (StringUtils.isNotEmpty(messageGroup)) {
             validateMessageGroup(messageGroup);
@@ -296,17 +314,21 @@ public class SendMessageActivity extends AbstractMessingActivity {
     }
 
     protected void fillDelayMessageProperty(apache.rocketmq.v2.Message message, org.apache.rocketmq.common.message.Message messageWithHeader) {
+        // 如果设置了 DeliveryTimestamp 表示消息是一个延时消息
         if (message.getSystemProperties().hasDeliveryTimestamp()) {
             Timestamp deliveryTimestamp = message.getSystemProperties().getDeliveryTimestamp();
             long deliveryTimestampMs = Timestamps.toMillis(deliveryTimestamp);
+            // 延时时间不能超过一天
             validateDelayTime(deliveryTimestampMs);
 
             ProxyConfig config = ConfigurationManager.getProxyConfig();
+            // useDelayLevel = false
             if (config.isUseDelayLevel()) {
+                // 延时时间所处的 level
                 int delayLevel = config.computeDelayLevel(deliveryTimestampMs);
                 MessageAccessor.putProperty(messageWithHeader, MessageConst.PROPERTY_DELAY_TIME_LEVEL, String.valueOf(delayLevel));
             }
-
+            // 任意延时时间的支持
             String timestampString = String.valueOf(deliveryTimestampMs);
             MessageAccessor.putProperty(messageWithHeader, MessageConst.PROPERTY_TIMER_DELIVER_MS, timestampString);
         }
@@ -375,18 +397,26 @@ public class SendMessageActivity extends AbstractMessingActivity {
         @Override
         public AddressableMessageQueue select(ProxyContext ctx, MessageQueueView messageQueueView) {
             try {
+                // 客户端请求发送的 messages
                 apache.rocketmq.v2.Message message = request.getMessages(0);
                 String shardingKey = null;
                 if (request.getMessagesCount() == 1) {
+                    // FIFO 消息指定的 messageGroup
                     shardingKey = message.getSystemProperties().getMessageGroup();
                 }
                 AddressableMessageQueue targetMessageQueue;
                 if (StringUtils.isNotEmpty(shardingKey)) {
                     // With shardingKey
+                    // 获取 topic 下所有副本集 master 上的的所有 writable messageQueue
+                    // queueId 是按照副本集的维度从 0 递增的
+                    // queue 排序优先级： topic->brokerName->queueId
                     List<AddressableMessageQueue> writeQueues = messageQueueView.getWriteSelector().getQueues();
+                    // 一致性hash 选取 messageQueue, 保证相同的 messageGroup 会被发送到同一个 messageQueue
                     int bucket = Hashing.consistentHash(shardingKey.hashCode(), writeQueues.size());
                     targetMessageQueue = writeQueues.get(bucket);
                 } else {
+                    // 非 FIFO 消息选取发送队列
+                    // 通过 queueIndex 轮询选取 messageQueue (所有副本集 master 上的的所有 messageQueue)
                     targetMessageQueue = messageQueueView.getWriteSelector().selectOneByPipeline(false);
                 }
                 return targetMessageQueue;

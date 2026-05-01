@@ -39,6 +39,7 @@ public class MQClientAPIFactory implements StartAndShutdown {
 
     private MQClientAPIExt[] clients;
     private final String namePrefix;
+    // 默认为 1
     private final int clientNum;
     private final ClientRemotingProcessor clientRemotingProcessor;
     private final RPCHook rpcHook;
@@ -91,6 +92,7 @@ public class MQClientAPIFactory implements StartAndShutdown {
     }
 
     public MQClientAPIExt getClient() {
+        // 默认只有一个
         if (clients.length == 1) {
             return this.clients[0];
         }
@@ -124,7 +126,7 @@ public class MQClientAPIFactory implements StartAndShutdown {
 
         NettyClientConfig nettyClientConfig = new NettyClientConfig();
         nettyClientConfig.setDisableCallbackExecutor(true);
-
+        // 构建 remotingClient
         MQClientAPIExt mqClientAPIExt = new MQClientAPIExt(
             clientConfig,
             nettyClientConfig,
@@ -132,7 +134,7 @@ public class MQClientAPIFactory implements StartAndShutdown {
             rpcHook,
             remotingClientCreator
         );
-
+        // 每隔 2 分钟更新 nameServerAddr
         if (!mqClientAPIExt.updateNameServerAddressList()) {
             mqClientAPIExt.fetchNameServerAddr();
             this.scheduledExecutorService.scheduleAtFixedRate(
@@ -142,6 +144,7 @@ public class MQClientAPIFactory implements StartAndShutdown {
                 TimeUnit.MILLISECONDS
             );
         }
+        // remotingClient.start()
         mqClientAPIExt.start();
         return mqClientAPIExt;
     }

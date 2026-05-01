@@ -17,9 +17,9 @@
 package org.apache.rocketmq.common.message;
 
 import java.nio.ByteBuffer;
-
+// 定义枚举类
 public enum MessageVersion {
-
+    // 枚举类实例
     MESSAGE_VERSION_V1(MessageDecoder.MESSAGE_MAGIC_CODE) {
         @Override
         public int getTopicLengthSize() {
@@ -41,7 +41,7 @@ public enum MessageVersion {
             buffer.put((byte) topicLength);
         }
     },
-
+    // 枚举类实例
     MESSAGE_VERSION_V2(MessageDecoder.MESSAGE_MAGIC_CODE_V2) {
         @Override
         public int getTopicLengthSize() {

@@ -41,6 +41,7 @@ public class SendMessageContext {
     private Object mqTraceContext;
     private Properties extProps;
     private String brokerRegionId;
+    // messageId
     private String msgUniqueKey;
     private long bornTimeStamp;
     private long requestTimeStamp;

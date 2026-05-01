@@ -78,6 +78,8 @@ public class ProxyTopicRouteData {
             for (Long brokerId : brokerData.getBrokerAddrs().keySet()) {
                 proxyBrokerData.getBrokerAddrs().put(brokerId, requestHostAndPortList);
             }
+            // topicQueueTable 中 topic 下所有副本集 BrokerData
+            // 但是其中的 BrokerAddrs 发生了替换 ,key 依然是 brokerId, 但是 brokerAddr 变成 proxyAddressList
             this.brokerDatas.add(proxyBrokerData);
         }
     }
@@ -125,8 +127,10 @@ public class ProxyTopicRouteData {
             return brokerData;
         }
     }
-
+    // topicQueueTable 中 topic 下的所有 QueueData（所有副本集）
     private List<QueueData> queueDatas = new ArrayList<>();
+    // topicQueueTable 中 topic 下所有副本集 BrokerData
+    // 但是其中的 BrokerAddrs 发生了替换 key 依然是 brokerId, 但是 brokerAddr 变成 proxyAddressList
     private List<ProxyBrokerData> brokerDatas = new ArrayList<>();
 
     public List<QueueData> getQueueDatas() {

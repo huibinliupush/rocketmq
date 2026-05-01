@@ -282,10 +282,11 @@ public class DefaultMappedFile extends AbstractMappedFile {
         PutMessageContext putMessageContext) {
         assert messageExt != null;
         assert cb != null;
-
+        // 获取当前 mappedFile 写入位置也即 maxOffset(局部)
         int currentPos = WROTE_POSITION_UPDATER.get(this);
 
         if (currentPos < this.fileSize) {
+            // writeBuffer or mappedByteBuffer
             ByteBuffer byteBuffer = appendMessageBuffer().slice();
             byteBuffer.position(currentPos);
             AppendMessageResult result;
@@ -295,12 +296,15 @@ public class DefaultMappedFile extends AbstractMappedFile {
                     (MessageExtBatch) messageExt, putMessageContext);
             } else if (messageExt instanceof MessageExtBrokerInner) {
                 // traditional single message or newly introduced inner-batch message
+                // 单个消息的写入
                 result = cb.doAppend(this.getFileFromOffset(), byteBuffer, this.fileSize - currentPos,
                     (MessageExtBrokerInner) messageExt, putMessageContext);
             } else {
                 return new AppendMessageResult(AppendMessageStatus.UNKNOWN_ERROR);
             }
+            // 更新 mappedFile 的 write position(局部)
             WROTE_POSITION_UPDATER.addAndGet(this, result.getWroteBytes());
+            // store timestamp of the last message.
             this.storeTimestamp = result.getStoreTimestamp();
             return result;
         }

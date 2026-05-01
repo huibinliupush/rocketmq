@@ -32,16 +32,17 @@ public class MessageExt extends Message {
     private int queueId;
 
     private int storeSize;
-
+    // 当前 messageQueue(queueId) 中最大的消息 index
     private long queueOffset;
     private int sysFlag;
     private long bornTimestamp;
     private SocketAddress bornHost;
-
+    // 服务端存储消息的时间
     private long storeTimestamp;
     private SocketAddress storeHost;
     private String msgId;
     private long commitLogOffset;
+    // 由 broker 端生成
     private int bodyCRC;
     private int reconsumeTimes;
 

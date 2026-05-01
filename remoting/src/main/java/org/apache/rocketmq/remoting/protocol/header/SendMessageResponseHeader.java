@@ -36,6 +36,10 @@ public class SendMessageResponseHeader implements CommandCustomHeader, FastCodes
     private Long queueOffset;
     private String transactionId;
     private String batchUniqId;
+    // see : org.apache.rocketmq.broker.processor.SendMessageProcessor.attachRecallHandle
+    // realTopic,BrokerName,timestampStr(timestampStr),messageId
+    // PROPERTY_TIMER_OUT_MS,PROPERTY_REAL_TOPIC 存在并且 !realTopic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)
+    // 情况下才会有 recallHandle
     private String recallHandle;
 
     @Override

@@ -24,7 +24,9 @@ import org.apache.rocketmq.common.message.MessageQueue;
 
 public class MQFaultStrategy {
     private LatencyFaultTolerance<String> latencyFaultTolerance;
+    // sendLatencyEnable = false
     private volatile boolean sendLatencyFaultEnable;
+    // startDetectorEnable = false
     private volatile boolean startDetectorEnable;
     private long[] latencyMax = {50L, 100L, 550L, 1800L, 3000L, 5000L, 15000L};
     private long[] notAvailableDuration = {0L, 0L, 2000L, 5000L, 6000L, 10000L, 30000L};
@@ -62,7 +64,10 @@ public class MQFaultStrategy {
         }
     };
 
-
+    // ClientConfig: related to proxy's send strategy in cluster mode.
+    // Resolver: name （副本集）对应的 master address
+    // ServiceDetector: Detect whether the remote service state is normal
+    // see : org.apache.rocketmq.proxy.service.route.TopicRouteService.TopicRouteService
     public MQFaultStrategy(ClientConfig cc, Resolver fetcher, ServiceDetector serviceDetector) {
         this.latencyFaultTolerance = new LatencyFaultToleranceImpl(fetcher, serviceDetector);
         this.latencyFaultTolerance.setDetectInterval(cc.getDetectInterval());
@@ -122,6 +127,7 @@ public class MQFaultStrategy {
     }
 
     public void setStartDetectorEnable(boolean startDetectorEnable) {
+        // startDetectorEnable = false
         this.startDetectorEnable = startDetectorEnable;
         this.latencyFaultTolerance.setStartDetectorEnable(startDetectorEnable);
     }

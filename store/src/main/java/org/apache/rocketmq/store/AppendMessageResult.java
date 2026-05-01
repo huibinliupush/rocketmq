@@ -63,12 +63,18 @@ public class AppendMessageResult {
 
     public AppendMessageResult(AppendMessageStatus status, long wroteOffset, int wroteBytes, Supplier<String> msgIdSupplier,
             long storeTimestamp, long logicsOffset, long pagecacheRT) {
+        // 写入结果
         this.status = status;
+        // 写入位置 PHY OFFSET（全局）
         this.wroteOffset = wroteOffset;
+        // 写入大小，如果是 END_OF_FILE 这里指定 maxBlank（文件剩余空间）
         this.wroteBytes = wroteBytes;
+        // msgId 生成
         this.msgIdSupplier = msgIdSupplier;
         this.storeTimestamp = storeTimestamp;
+        // 消息要写入的 messageQueue offset(index)
         this.logicsOffset = logicsOffset;
+        // 写入时间花费
         this.pagecacheRT = pagecacheRT;
     }
 

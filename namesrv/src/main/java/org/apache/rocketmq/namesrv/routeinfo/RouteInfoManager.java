@@ -754,6 +754,7 @@ public class RouteInfoManager {
         boolean foundQueueData = false;
         boolean foundBrokerData = false;
         List<BrokerData> brokerDataList = new LinkedList<>();
+        // topicQueueTable 中 topic 下所有副本集 BrokerData
         topicRouteData.setBrokerDatas(brokerDataList);
 
         HashMap<String, List<String>> filterServerMap = new HashMap<>();
@@ -763,9 +764,10 @@ public class RouteInfoManager {
             this.lock.readLock().lockInterruptibly();
             Map<String, QueueData> queueDataMap = this.topicQueueTable.get(topic);
             if (queueDataMap != null) {
+                // topicQueueTable 中 topic 下的所有 QueueData（所有副本集）
                 topicRouteData.setQueueDatas(new ArrayList<>(queueDataMap.values()));
                 foundQueueData = true;
-
+                // topicQueueTable 中 topic 下所有副本集
                 Set<String> brokerNameSet = new HashSet<>(queueDataMap.keySet());
 
                 for (String brokerName : brokerNameSet) {
@@ -774,7 +776,7 @@ public class RouteInfoManager {
                         continue;
                     }
                     BrokerData brokerDataClone = new BrokerData(brokerData);
-
+                    // topicQueueTable 中 topic 下所有副本集 BrokerData
                     brokerDataList.add(brokerDataClone);
                     foundBrokerData = true;
                     if (filterServerTable.isEmpty()) {
@@ -799,7 +801,7 @@ public class RouteInfoManager {
         if (foundBrokerData && foundQueueData) {
 
             topicRouteData.setTopicQueueMappingByBroker(this.topicQueueMappingInfoTable.get(topic));
-
+            // false
             if (!namesrvConfig.isSupportActingMaster()) {
                 return topicRouteData;
             }

@@ -349,6 +349,7 @@ public abstract class NettyRemotingAbstract {
                 }
 
                 if (exception == null) {
+                    // response 返回 null 表示 processor 内部异步发送，尽早释放这里的线程
                     response = pair.getObject1().processRequest(ctx, cmd);
                 } else {
                     response = RemotingCommand.createResponseCommand(RemotingSysResponseCode.SYSTEM_ERROR, null);

@@ -23,6 +23,7 @@ public class PutMessageContext {
     private int batchSize;
 
     public PutMessageContext(String topicQueueTableKey) {
+        // topicQueueKey
         this.topicQueueTableKey = topicQueueTableKey;
     }
 

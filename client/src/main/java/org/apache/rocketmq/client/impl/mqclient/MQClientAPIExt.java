@@ -169,13 +169,16 @@ public class MQClientAPIExt extends MQClientAPIImpl {
         SendMessageRequestHeader requestHeader,
         long timeoutMillis
     ) {
+        // SendMessageRequestHeaderV2 Use short variable name to speed up FastJson deserialization process.
+        // 字段其实和 V1 含义都是一样的，只不过用 a,b,c,d 代替了
         SendMessageRequestHeaderV2 requestHeaderV2 = SendMessageRequestHeaderV2.createSendMessageRequestHeaderV2(requestHeader);
         RemotingCommand request = RemotingCommand.createRequestCommand(RequestCode.SEND_MESSAGE_V2, requestHeaderV2);
         request.setBody(msg.getBody());
-
+        // 一个 RemotingClient 管理好几个连接（nameserver,broker）
         return this.getRemotingClient().invoke(brokerAddr, request, timeoutMillis).thenCompose(response -> {
             CompletableFuture<SendResult> future0 = new CompletableFuture<>();
             try {
+                // response 转换为 SendResult
                 future0.complete(this.processSendResponse(brokerName, msg, response, brokerAddr));
             } catch (Exception e) {
                 future0.completeExceptionally(e);

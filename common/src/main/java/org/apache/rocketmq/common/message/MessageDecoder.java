@@ -601,7 +601,8 @@ public class MessageDecoder {
         }
         return msgExts;
     }
-
+    // name1(NAME_VALUE_SEPARATOR)value2(PROPERTY_SEPARATOR)name1value2name1value2
+    // NAME_VALUE_SEPARATOR = 1,PROPERTY_SEPARATOR=2
     public static String messageProperties2String(Map<String, String> properties) {
         if (properties == null) {
             return "";
@@ -632,6 +633,8 @@ public class MessageDecoder {
             sb.append(value);
             sb.append(PROPERTY_SEPARATOR);
         }
+        // name1(NAME_VALUE_SEPARATOR)value2(PROPERTY_SEPARATOR)name1value2name1value2
+        // NAME_VALUE_SEPARATOR = 1,PROPERTY_SEPARATOR=2
         return sb.toString();
     }
 

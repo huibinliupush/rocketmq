@@ -25,10 +25,13 @@ import org.apache.rocketmq.common.UtilAll;
 public class MessageClientIDSetter {
     
     private static final int LEN;
+    // ip,pid,MessageClientIDSetter-hashcode
     private static final char[] FIX_STRING;
     private static final AtomicInteger COUNTER;
-    private static long startTime;
-    private static long nextStartTime;
+    // 当前时间对应的月初1号0点0分0秒
+    private static long startTime;// 毫秒
+    // 当前时间对应下一个月1号0点0分0秒
+    private static long nextStartTime;// 毫秒
 
     static {
         byte[] ip;
@@ -42,6 +45,7 @@ public class MessageClientIDSetter {
         tempBuffer.put(ip);
         tempBuffer.putShort((short) UtilAll.getPid());
         tempBuffer.putInt(MessageClientIDSetter.class.getClassLoader().hashCode());
+        // ip,pid,MessageClientIDSetter-hashcode
         FIX_STRING = UtilAll.bytes2string(tempBuffer.array()).toCharArray();
         setStartTime(System.currentTimeMillis());
         COUNTER = new AtomicInteger(0);
@@ -113,23 +117,27 @@ public class MessageClientIDSetter {
 
     public static String createUniqID() {
         char[] sb = new char[LEN * 2];
+        // FIX_STRING ： ip,pid,MessageClientIDSetter-hashcode
         System.arraycopy(FIX_STRING, 0, sb, 0, FIX_STRING.length);
         long current = System.currentTimeMillis();
         if (current >= nextStartTime) {
             setStartTime(current);
         }
+        // 毫秒
         int diff = (int)(current - startTime);
         if (diff < 0 && diff > -1000_000) {
             // may cause by NTP
             diff = 0;
         }
         int pos = FIX_STRING.length;
+        // 当前时间与月初1号的时间差值（毫秒）
         UtilAll.writeInt(sb, pos, diff);
         pos += 8;
         UtilAll.writeShort(sb, pos, COUNTER.getAndIncrement());
+        // ip,pid,MessageClientIDSetter-hashcode,当前时间与月初1号的时间差值（毫秒）,COUNTER
         return new String(sb);
     }
-
+    // ip,pid,MessageClientIDSetter-hashcode,当前时间与月初1号的时间差值（毫秒）,COUNTER
     public static void setUniqID(final Message msg) {
         if (msg.getProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX) == null) {
             msg.putProperty(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX, createUniqID());

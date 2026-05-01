@@ -110,7 +110,7 @@ public class GroupTransferService extends ServiceThread {
 
                 long deadLine = req.getDeadLine();
                 final boolean allAckInSyncStateSet = req.getAckNums() == MixAll.ALL_ACK_IN_SYNC_STATE_SET;
-
+                // 不停的检查 GroupCommitRequest，直到 transferOK 或者 timeout
                 for (int i = 0; !transferOK && deadLine - System.nanoTime() > 0; i++) {
                     if (i > 0) {
                         this.notifyTransferObject.waitForRunning(1);
@@ -184,6 +184,7 @@ public class GroupTransferService extends ServiceThread {
 
         while (!this.isStopped()) {
             try {
+                // 每隔10ms 检测 slave 的同步情况
                 this.waitForRunning(10);
                 this.doWaitTransfer();
             } catch (Exception e) {

@@ -27,7 +27,9 @@ public class Message implements Serializable {
 
     private String topic;
     private int flag;
+    // 自定义属性不能超过 128 个，properties 占用总字节数不能超过 16K
     private Map<String, String> properties;
+    // 不能超过 4M
     private byte[] body;
     private String transactionId;
 

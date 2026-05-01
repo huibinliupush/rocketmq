@@ -31,7 +31,7 @@ public class AttributeParser {
     public static final String ATTR_ADD_PLUS_SIGN = "+";
 
     private static final String ATTR_DELETE_MINUS_SIGN = "-";
-
+    // map 中的 key  带 + ，-
     public static Map<String, String> parseToMap(String attributesModification) {
         if (Strings.isNullOrEmpty(attributesModification)) {
             return new HashMap<>();
@@ -45,6 +45,7 @@ public class AttributeParser {
             String value;
             if (kv.contains(ATTR_KEY_VALUE_EQUAL_SIGN)) {
                 String[] splits = kv.split(ATTR_KEY_VALUE_EQUAL_SIGN);
+                // 带 + ，-
                 key = splits[0];
                 value = splits[1];
                 if (!key.contains(ATTR_ADD_PLUS_SIGN)) {

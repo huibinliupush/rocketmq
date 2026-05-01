@@ -600,13 +600,13 @@ public class DefaultMessageStore implements MessageStore {
                 return CompletableFuture.completedFuture(handleResult);
             }
         }
-
+        // 批量消息
         if (msg.getProperties().containsKey(MessageConst.PROPERTY_INNER_NUM)
             && !MessageSysFlag.check(msg.getSysFlag(), MessageSysFlag.INNER_BATCH_FLAG)) {
             LOGGER.warn("[BUG]The message had property {} but is not an inner batch", MessageConst.PROPERTY_INNER_NUM);
             return CompletableFuture.completedFuture(new PutMessageResult(PutMessageStatus.MESSAGE_ILLEGAL, null));
         }
-
+        // cq type 在 topic 的 attributes 中指定
         if (MessageSysFlag.check(msg.getSysFlag(), MessageSysFlag.INNER_BATCH_FLAG)) {
             Optional<TopicConfig> topicConfig = this.getTopicConfig(msg.getTopic());
             if (!QueueTypeUtils.isBatchCq(topicConfig)) {
@@ -624,6 +624,7 @@ public class DefaultMessageStore implements MessageStore {
                 LOGGER.warn("DefaultMessageStore#putMessage: CommitLog#putMessage cost {}ms, topic={}, bodyLength={}",
                     elapsedTime, msg.getTopic(), msg.getBody().length);
             }
+            // 统计消息写入时间在各个时间范围的分布次数
             this.storeStatsService.setPutMessageEntireTimeMax(elapsedTime);
 
             if (null == result || !result.isOk()) {
@@ -2198,6 +2199,7 @@ public class DefaultMessageStore implements MessageStore {
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
 
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
+            // 当前 messageQueue(queueId) 中最大的消息 index
             this.consumeQueueStore.assignQueueOffset(msg);
         }
     }

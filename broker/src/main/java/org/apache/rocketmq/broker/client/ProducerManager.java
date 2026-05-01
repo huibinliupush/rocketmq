@@ -41,8 +41,10 @@ public class ProducerManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private static final long CHANNEL_EXPIRED_TIMEOUT = 1000 * 120;
     private static final int GET_AVAILABLE_CHANNEL_RETRY_COUNT = 3;
+    // producerGroup 与 producer channel 之间的映射
     private final ConcurrentMap<String /* group name */, ConcurrentMap<Channel, ClientChannelInfo>> groupChannelTable =
         new ConcurrentHashMap<>();
+    // clientId 与 client channel 之间的映射
     private final ConcurrentMap<String, Channel> clientChannelTable = new ConcurrentHashMap<>();
     protected final BrokerStatsManager brokerStatsManager;
     private final BrokerConfig brokerConfig;
@@ -202,7 +204,7 @@ public class ProducerManager {
         }
         return removed;
     }
-
+    // producer 发送心跳时候注册
     public void registerProducer(final String group, final ClientChannelInfo clientChannelInfo) {
 
         long start = System.currentTimeMillis();
@@ -212,8 +214,8 @@ public class ProducerManager {
         // note that we must take care of the exist groups and channels,
         // only can return when groups or channels not exist.
         if (this.brokerConfig != null
-                && !this.brokerConfig.isEnableRegisterProducer()
-                && this.brokerConfig.isRejectTransactionMessage()) {
+                && !this.brokerConfig.isEnableRegisterProducer() // true
+                && this.brokerConfig.isRejectTransactionMessage()) { // false
             boolean needRegister = true;
             if (null == channelTable) {
                 needRegister = false;
@@ -243,6 +245,7 @@ public class ProducerManager {
             channelTable.put(clientChannelInfo.getChannel(), clientChannelInfo);
             clientChannelTable.put(clientChannelInfo.getClientId(), clientChannelInfo.getChannel());
             log.info("new producer connected, group: {} channel: {}", group, clientChannelInfo.toString());
+            // enableFastChannelEventProcess = false
             if (this.brokerConfig != null && this.brokerConfig.isEnableFastChannelEventProcess()) {
                 ClientChannelAttributeHelper.addProducerGroup(clientChannelInfo.getChannel(), group);
             }

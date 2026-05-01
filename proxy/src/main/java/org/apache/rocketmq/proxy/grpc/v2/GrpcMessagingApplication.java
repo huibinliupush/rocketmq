@@ -77,11 +77,15 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
     private final GrpcMessingActivity grpcMessingActivity;
 
     protected final RequestPipeline requestPipeline;
-
+    // PROCESSOR_NUMBER
     protected ThreadPoolExecutor routeThreadPoolExecutor;
+    // PROCESSOR_NUMBER
     protected ThreadPoolExecutor producerThreadPoolExecutor;
+    // PROCESSOR_NUMBER
     protected ThreadPoolExecutor consumerThreadPoolExecutor;
+    // PROCESSOR_NUMBER
     protected ThreadPoolExecutor clientManagerThreadPoolExecutor;
+    // PROCESSOR_NUMBER
     protected ThreadPoolExecutor transactionThreadPoolExecutor;
 
 
@@ -90,22 +94,25 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
         this.requestPipeline = requestPipeline;
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
+        // PROCESSOR_NUMBER
         this.routeThreadPoolExecutor = ThreadPoolMonitor.createAndMonitor(
             config.getGrpcRouteThreadPoolNums(),
             config.getGrpcRouteThreadPoolNums(),
             1,
             TimeUnit.MINUTES,
             "GrpcRouteThreadPool",
-            config.getGrpcRouteThreadQueueCapacity()
+            config.getGrpcRouteThreadQueueCapacity() // 10000
         );
+        // PROCESSOR_NUMBER
         this.producerThreadPoolExecutor = ThreadPoolMonitor.createAndMonitor(
             config.getGrpcProducerThreadPoolNums(),
             config.getGrpcProducerThreadPoolNums(),
             1,
             TimeUnit.MINUTES,
             "GrpcProducerThreadPool",
-            config.getGrpcProducerThreadQueueCapacity()
+            config.getGrpcProducerThreadQueueCapacity() //  10000
         );
+        // PROCESSOR_NUMBER
         this.consumerThreadPoolExecutor = ThreadPoolMonitor.createAndMonitor(
             config.getGrpcConsumerThreadPoolNums(),
             config.getGrpcConsumerThreadPoolNums(),
@@ -114,14 +121,16 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
             "GrpcConsumerThreadPool",
             config.getGrpcConsumerThreadQueueCapacity()
         );
+        // PROCESSOR_NUMBER
         this.clientManagerThreadPoolExecutor = ThreadPoolMonitor.createAndMonitor(
             config.getGrpcClientManagerThreadPoolNums(),
             config.getGrpcClientManagerThreadPoolNums(),
             1,
             TimeUnit.MINUTES,
             "GrpcClientManagerThreadPool",
-            config.getGrpcClientManagerThreadQueueCapacity()
+            config.getGrpcClientManagerThreadQueueCapacity()// 10000
         );
+        // PROCESSOR_NUMBER
         this.transactionThreadPoolExecutor = ThreadPoolMonitor.createAndMonitor(
             config.getGrpcTransactionThreadPoolNums(),
             config.getGrpcTransactionThreadPoolNums(),
@@ -176,6 +185,7 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
         } else {
             log.error("[BUG]grpc request pipe is not been executed");
         }
+        // 封装成 GrpcTask 的目的是当 executor 拒绝任务的时候，可以触发 rejectHandler 向客户端回写错误消息 -- TOO_MANY_REQUESTS(flow limit)
         executor.submit(new GrpcTask<>(runnable, context, request, responseObserver, statusResponseCreator.apply(flowLimitStatus())));
     }
 
@@ -190,7 +200,8 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
             ResponseWriter.getInstance().write(responseObserver, response);
         }
     }
-
+    // 后续会在 addExecutor 中执行 requestPipeling，在 ContextInitPipeline 中会根据客户端传递过来的 Metadata 初始化 ProxyContext
+    // org.apache.rocketmq.proxy.grpc.pipeline.ContextInitPipeline
     protected ProxyContext createContext() {
         return ProxyContext.create();
     }
@@ -204,6 +215,8 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
     @Override
     public void queryRoute(QueryRouteRequest request, StreamObserver<QueryRouteResponse> responseObserver) {
         Function<Status, QueryRouteResponse> statusResponseCreator = status -> QueryRouteResponse.newBuilder().setStatus(status).build();
+        // 后续会在 addExecutor 中执行 requestPipeling，在 ContextInitPipeline 中会根据客户端传递过来的 Metadata 初始化 ProxyContext
+        // org.apache.rocketmq.proxy.grpc.pipeline.ContextInitPipeline
         ProxyContext context = createContext();
         try {
             this.addExecutor(this.routeThreadPoolExecutor,
@@ -221,6 +234,8 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
     @Override
     public void heartbeat(HeartbeatRequest request, StreamObserver<HeartbeatResponse> responseObserver) {
         Function<Status, HeartbeatResponse> statusResponseCreator = status -> HeartbeatResponse.newBuilder().setStatus(status).build();
+        // 后续会在 addExecutor 中执行 requestPipeling，在 ContextInitPipeline 中会根据客户端传递过来的 Metadata 初始化 ProxyContext
+        // org.apache.rocketmq.proxy.grpc.pipeline.ContextInitPipeline
         ProxyContext context = createContext();
         try {
             this.addExecutor(this.clientManagerThreadPoolExecutor,
@@ -238,6 +253,8 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
     @Override
     public void sendMessage(SendMessageRequest request, StreamObserver<SendMessageResponse> responseObserver) {
         Function<Status, SendMessageResponse> statusResponseCreator = status -> SendMessageResponse.newBuilder().setStatus(status).build();
+        // 后续会在 addExecutor 中执行 requestPipeling，在 ContextInitPipeline 中会根据客户端传递过来的 Metadata 初始化 ProxyContext
+        // org.apache.rocketmq.proxy.grpc.pipeline.ContextInitPipeline
         ProxyContext context = createContext();
         try {
             this.addExecutor(this.producerThreadPoolExecutor,

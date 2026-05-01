@@ -19,14 +19,18 @@ package org.apache.rocketmq.common.message;
 import java.util.HashSet;
 
 public class MessageConst {
+    // SystemProperties keySet
     public static final String PROPERTY_KEYS = "KEYS";
     public static final String PROPERTY_TAGS = "TAGS";
     public static final String PROPERTY_WAIT_STORE_MSG_OK = "WAIT";
+    // 延时时间所处的 level see: org.apache.rocketmq.proxy.config.ProxyConfig.computeDelayLevel
+    // 延时消息只能按照 delayLevel 来固定延时时间，不能随意指定延时时间
     public static final String PROPERTY_DELAY_TIME_LEVEL = "DELAY";
     public static final String PROPERTY_RETRY_TOPIC = "RETRY_TOPIC";
     public static final String PROPERTY_REAL_TOPIC = "REAL_TOPIC";
     public static final String PROPERTY_REAL_QUEUE_ID = "REAL_QID";
     public static final String PROPERTY_TRANSACTION_PREPARED = "TRAN_MSG";
+    // 默认为 topicname
     public static final String PROPERTY_PRODUCER_GROUP = "PGROUP";
     public static final String PROPERTY_MIN_OFFSET = "MIN_OFFSET";
     public static final String PROPERTY_MAX_OFFSET = "MAX_OFFSET";
@@ -35,9 +39,16 @@ public class MessageConst {
     public static final String PROPERTY_TRANSFER_FLAG = "TRANSFER_FLAG";
     public static final String PROPERTY_CORRECTION_FLAG = "CORRECTION_FLAG";
     public static final String PROPERTY_MQ2_FLAG = "MQ2_FLAG";
+    // Business code may failed to process messages for the moment. Hence, clients
+    // may request servers to deliver them again using certain back-off strategy,
+    // the attempt is 1 not 0 if message is delivered first time, and it is absent
+    // for message publishing.消息发送的时候不会设置
     public static final String PROPERTY_RECONSUME_TIME = "RECONSUME_TIME";
+    // BrokerConfig().getRegionId
     public static final String PROPERTY_MSG_REGION = "MSG_REGION";
+    // BrokerConfig().isTraceOn()
     public static final String PROPERTY_TRACE_SWITCH = "TRACE_ON";
+    // messageId :  ip,pid,MessageClientIDSetter-hashcode,当前时间与月初1号的时间差值（毫秒）,COUNTER
     public static final String PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX = "UNIQ_KEY";
     public static final String PROPERTY_EXTEND_UNIQ_INFO = "EXTEND_UNIQ_INFO";
     public static final String PROPERTY_MAX_RECONSUME_TIMES = "MAX_RECONSUME_TIMES";
@@ -60,6 +71,7 @@ public class MessageConst {
     public static final String PROPERTY_POP_CK = "POP_CK";
     public static final String PROPERTY_POP_CK_OFFSET = "POP_CK_OFFSET";
     public static final String PROPERTY_FIRST_POP_TIME = "1ST_POP_TIME";
+    // messageGroup ，messageGroup 长度不能超过 64 字节
     public static final String PROPERTY_SHARDING_KEY = "__SHARDINGKEY";
     public static final String PROPERTY_FORWARD_QUEUE_ID = "PROPERTY_FORWARD_QUEUE_ID";
     public static final String PROPERTY_REDIRECT = "REDIRECT";
@@ -67,6 +79,7 @@ public class MessageConst {
     public static final String PROPERTY_INNER_MULTI_QUEUE_OFFSET = "INNER_MULTI_QUEUE_OFFSET";
     public static final String PROPERTY_TRACE_CONTEXT = "TRACE_CONTEXT";
     public static final String PROPERTY_TIMER_DELAY_SEC = "TIMER_DELAY_SEC";
+    // DeliveryTimestamp 任意延时时间的支持
     public static final String PROPERTY_TIMER_DELIVER_MS = "TIMER_DELIVER_MS";
     public static final String PROPERTY_BORN_HOST = "__BORNHOST";
     public static final String PROPERTY_BORN_TIMESTAMP = "BORN_TIMESTAMP";

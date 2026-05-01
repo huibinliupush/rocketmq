@@ -31,11 +31,16 @@ import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
 import org.apache.rocketmq.remoting.protocol.statictopic.TopicQueueMappingInfo;
 
 public class TopicRouteData extends RemotingSerializable {
+    // KvConfigManager 中 topic 的 orderConf
+    // 用于构建 order topic route
     private String orderTopicConf;
+    // topicQueueTable 中 topic 下的所有 QueueData（所有副本集）
     private List<QueueData> queueDatas;
+    // topicQueueTable 中 topic 下所有副本集 BrokerData
     private List<BrokerData> brokerDatas;
     private HashMap<String/* brokerAddr */, List<String>/* Filter Server */> filterServerTable;
     //It could be null or empty
+    // topicQueueMappingInfoTable 中 topic 下的 topicQueueMappingInfo
     private Map<String/*brokerName*/, TopicQueueMappingInfo> topicQueueMappingByBroker;
 
     public TopicRouteData() {

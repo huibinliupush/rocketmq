@@ -70,6 +70,7 @@ public abstract class AbstractConsumeQueueStore implements ConsumeQueueStoreInte
     @Override
     public void assignQueueOffset(MessageExtBrokerInner msg) throws RocksDBException {
         ConsumeQueueInterface consumeQueue = findOrCreateConsumeQueue(msg.getTopic(), msg.getQueueId());
+        // 当前 messageQueue(queueId) 中最大的消息 index
         consumeQueue.assignQueueOffset(this.queueOffsetOperator, msg);
     }
 

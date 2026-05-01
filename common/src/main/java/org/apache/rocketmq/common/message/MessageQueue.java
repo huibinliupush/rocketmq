@@ -22,6 +22,9 @@ public class MessageQueue implements Comparable<MessageQueue>, Serializable {
     private static final long serialVersionUID = 6191200464116433425L;
     private String topic;
     private String brokerName;
+    // queueId 按照副本集排序
+    // brokerNameA 中有 queueId = 0，brokerNameB 中也有 queueId = 0，
+    // queueId 是按照副本集的维度从 0 递增的
     private int queueId;
 
     public MessageQueue() {

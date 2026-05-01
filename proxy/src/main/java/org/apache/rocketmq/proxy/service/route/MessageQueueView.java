@@ -22,8 +22,9 @@ import org.apache.rocketmq.remoting.protocol.route.TopicRouteData;
 
 public class MessageQueueView {
     public static final MessageQueueView WRAPPED_EMPTY_QUEUE = new MessageQueueView("", new TopicRouteData(), null);
-
+    // 里边封装保存了 topic 下所有副本集中在 master 上的所有的可读队列
     private final MessageQueueSelector readSelector;
+    // 里边封装保存了 topic 下所有副本集中在 master 上的所有的可写队列
     private final MessageQueueSelector writeSelector;
     private final TopicRouteWrapper topicRouteWrapper;
 

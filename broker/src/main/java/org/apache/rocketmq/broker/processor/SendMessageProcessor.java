@@ -92,15 +92,18 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             case RequestCode.CONSUMER_SEND_MSG_BACK:
                 return this.consumerSendMsgBack(ctx, request);
             default:
+                // SEND_MESSAGE,SEND_MESSAGE_V2,SEND_BATCH_MESSAGE
                 SendMessageRequestHeader requestHeader = parseRequestHeader(request);
                 if (requestHeader == null) {
                     return null;
                 }
+                // static topic 相关处理
                 TopicQueueMappingContext mappingContext = this.brokerController.getTopicQueueMappingManager().buildTopicQueueMappingContext(requestHeader, true);
                 RemotingCommand rewriteResult = this.brokerController.getTopicQueueMappingManager().rewriteRequestForStaticTopic(requestHeader, mappingContext);
                 if (rewriteResult != null) {
                     return rewriteResult;
                 }
+                // 封装消息相关属性，除 body 之外
                 sendMessageContext = buildMsgContext(ctx, requestHeader, request);
                 try {
                     this.executeSendMessageHookBefore(sendMessageContext);
@@ -111,6 +114,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 }
 
                 RemotingCommand response;
+                // delete PROPERTY_POP_CK
                 clearReservedProperties(requestHeader);
 
                 if (requestHeader.isBatch()) {
@@ -267,6 +271,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setQueueId(queueIdInt);
 
         Map<String, String> oriProps = MessageDecoder.string2messageProperties(requestHeader.getProperties());
+        // 处理 retry topic 消息以及死信队列
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig, oriProps)) {
             return response;
         }
@@ -275,13 +280,14 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setFlag(requestHeader.getFlag());
 
         String uniqKey = oriProps.get(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX);
+        // 如果客户端没有指定 messageId 则由服务端生成
         if (uniqKey == null || uniqKey.length() <= 0) {
             uniqKey = MessageClientIDSetter.createUniqID();
             oriProps.put(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX, uniqKey);
         }
 
         MessageAccessor.setProperties(msgInner, oriProps);
-
+        // "DELETE", "COMPACTION" 默认为  "DELETE"， 在 admin 创建 topic 的时候指定在 attributes 中
         CleanupPolicy cleanupPolicy = CleanupPolicyUtils.getDeletePolicy(Optional.of(topicConfig));
         if (Objects.equals(cleanupPolicy, CleanupPolicy.COMPACTION)) {
             if (StringUtils.isBlank(msgInner.getKeys())) {
@@ -290,7 +296,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 return response;
             }
         }
-
+        // tags.hashCode
         msgInner.setTagsCode(MessageExtBrokerInner.tagsString2tagsCode(topicConfig.getTopicFilterType(), msgInner.getTags()));
         msgInner.setBornTimestamp(requestHeader.getBornTimestamp());
         msgInner.setBornHost(ctx.channel().remoteAddress());
@@ -319,12 +325,13 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         long beginTimeMillis = this.brokerController.getMessageStore().now();
-
+        // asyncSendEnable = true
         if (brokerController.getBrokerConfig().isAsyncSendEnable()) {
             CompletableFuture<PutMessageResult> asyncPutMessageFuture;
             if (sendTransactionPrepareMessage) {
                 asyncPutMessageFuture = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
             } else {
+                // 存储消息
                 asyncPutMessageFuture = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
             }
 
@@ -335,6 +342,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                     handlePutMessageResult(putMessageResult, response, request, finalMsgInner, responseHeader, sendMessageContext,
                         ctx, finalQueueIdInt, beginTimeMillis, mappingContext, BrokerMetricsManager.getMessageType(requestHeader));
                 if (responseFuture != null) {
+                    // 发送回客户端
                     doResponse(ctx, request, responseFuture);
                 }
 
@@ -344,7 +352,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 }
 
                 sendMessageCallback.onComplete(sendMessageContext, response);
-            }, this.brokerController.getPutMessageFutureExecutor());
+            }, this.brokerController.getPutMessageFutureExecutor());// 最大 4 线程
             // Returns null to release the send message thread
             return null;
         } else {
@@ -452,6 +460,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         String authType = request.getExtFields().get(BrokerStatsManager.ACCOUNT_AUTH_TYPE);
         String ownerParent = request.getExtFields().get(BrokerStatsManager.ACCOUNT_OWNER_PARENT);
         String ownerSelf = request.getExtFields().get(BrokerStatsManager.ACCOUNT_OWNER_SELF);
+        // 4K
         int commercialSizePerMsg = brokerController.getBrokerConfig().getCommercialSizePerMsg();
         if (sendOK) {
 
@@ -497,10 +506,13 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 sendMessageContext.setMsgId(responseHeader.getMsgId());
                 sendMessageContext.setQueueId(responseHeader.getQueueId());
                 sendMessageContext.setQueueOffset(responseHeader.getQueueOffset());
-
+                // 1
                 int commercialBaseCount = brokerController.getBrokerConfig().getCommercialBaseCount();
                 int wroteSize = putMessageResult.getAppendMessageResult().getWroteBytes();
                 int msgNum = putMessageResult.getAppendMessageResult().getMsgNum();
+                // 用于执行向上取整运算。它会返回大于或等于传入参数的最小 double 值（作为整数但用 double 表示）。
+                // Math.ceil(2.1) → 3.0 向上取整（向正无穷方向）
+                // Math.floor(x) 向下取整（向负无穷方向）,Math.round(x) 四舍五入（返回 long 或 int
                 int commercialMsgNum = (int) Math.ceil(wroteSize / (double) commercialSizePerMsg);
                 int incValue = commercialMsgNum * commercialBaseCount;
 
@@ -658,6 +670,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         String realTopic = msg.getProperty(MessageConst.PROPERTY_REAL_TOPIC);
         if (timestampStr != null && realTopic != null && !realTopic.startsWith(MixAll.RETRY_GROUP_TOPIC_PREFIX)) {
             timestampStr = String.valueOf(Long.parseLong(timestampStr) + 1); // consider of floor
+            // realTopic,BrokerName,timestampStr(timestampStr),messageId
             String recallHandle = RecallMessageHandle.HandleV1.buildHandle(realTopic,
                 brokerController.getBrokerConfig().getBrokerName(), timestampStr, MessageClientIDSetter.getUniqID(msg));
             responseHeader.setRecallHandle(recallHandle);
@@ -699,7 +712,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         response.addExtField(MessageConst.PROPERTY_TRACE_SWITCH, String.valueOf(this.brokerController.getBrokerConfig().isTraceOn()));
 
         LOGGER.debug("Receive SendMessage request command {}", request);
-
+        // 0L
         final long startTimestamp = this.brokerController.getBrokerConfig().getStartAcceptSendRequestTimeStamp();
 
         if (this.brokerController.getMessageStore().now() < startTimestamp) {
@@ -709,6 +722,8 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         response.setCode(-1);
+        // topic 相关参数的校验，如果 topic 不存在那么就自动创建 topic
+        // topic 权限是否可写 ？ topic name 是否合法 ？queueId是否存在，超过最大的 queueid ？
         super.msgCheck(ctx, requestHeader, request, response);
 
         return response;

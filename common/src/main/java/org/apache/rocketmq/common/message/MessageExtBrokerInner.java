@@ -28,11 +28,13 @@ public class MessageExtBrokerInner extends MessageExt {
     private static final long serialVersionUID = 7256001576878700634L;
     private String propertiesString;
     private long tagsCode;
-
+    // 存储消息序列化之后的字节
+    // see : org.apache.rocketmq.store.MessageExtEncoder.encode(org.apache.rocketmq.common.message.MessageExtBrokerInner
+    // 当写入 commitlog 之后置为 null
     private ByteBuffer encodedBuff;
 
     private volatile boolean encodeCompleted;
-
+    // MESSAGE_VERSION_V1
     private MessageVersion version = MessageVersion.MESSAGE_VERSION_V1;
 
     public ByteBuffer getEncodedBuff() {

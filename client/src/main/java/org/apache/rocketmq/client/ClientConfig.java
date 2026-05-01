@@ -79,7 +79,9 @@ public class ClientConfig {
     private String socksProxyConfig = System.getProperty(SOCKS_PROXY_CONFIG, "{}");
 
     private int mqClientApiTimeout = 3 * 1000;
+    // detectTimeout = 200
     private int detectTimeout = 200;
+    // detectInterval = 2 * 1000;
     private int detectInterval = 2 * 1000;
 
     private LanguageCode language = LanguageCode.JAVA;
@@ -95,8 +97,11 @@ public class ClientConfig {
      * DO NOT OPEN when ORDER messages are required.
      * Turning on will interfere with the queue selection functionality,
      * possibly conflicting with the order message.
+     *
      */
+    // sendLatencyEnable = false
     private boolean sendLatencyEnable = Boolean.parseBoolean(System.getProperty(SEND_LATENCY_ENABLE, "false"));
+    // startDetectorEnable = false
     private boolean startDetectorEnable = Boolean.parseBoolean(System.getProperty(START_DETECTOR_ENABLE, "false"));
 
     private boolean enableHeartbeatChannelEventListener = true;
