@@ -128,15 +128,26 @@ public class HookUtils {
 
     public static PutMessageResult handleScheduleMessage(BrokerController brokerController,
         final MessageExtBrokerInner msg) {
+        // 是否为 TRANSACTION_ROLLBACK_TYPE
         final int tranType = MessageSysFlag.getTransactionValue(msg.getSysFlag());
         if (tranType == MessageSysFlag.TRANSACTION_NOT_TYPE
             || tranType == MessageSysFlag.TRANSACTION_COMMIT_TYPE) {
+            // 是否为 TIMER_TOPIC =  rmq_sys_wheel_timer
             if (!isRolledTimerMessage(msg)) {
+                // 是否为时间轮调度延时消息
+                // PROPERTY_TIMER_DELIVER_MS
+                // PROPERTY_TIMER_DELAY_MS
+                // PROPERTY_TIMER_DELAY_SEC
                 if (checkIfTimerMessage(msg)) {
+                    // 延时消息，broker 端必须开启 TimerWheelEnable
                     if (!brokerController.getMessageStoreConfig().isTimerWheelEnable()) {
                         //wheel timer is not enabled, reject the message
                         return new PutMessageResult(PutMessageStatus.WHEEL_TIMER_NOT_ENABLE, null);
                     }
+                    // 5.0 时间轮延时消息调度方案（任意时间）精度为 1s
+                    // Backup real topic（PROPERTY_REAL_TOPIC）, queueId（PROPERTY_REAL_QUEUE_ID）,deliverMs(PROPERTY_TIMER_OUT_MS)
+                    // 设置延时消息 topic ：rmq_sys_wheel_timer
+                    // 只有一个队列，queueId = 0
                     PutMessageResult transformRes = transformTimerMessage(brokerController, msg);
                     if (null != transformRes) {
                         return transformRes;
@@ -144,7 +155,12 @@ public class HookUtils {
                 }
             }
             // Delay Delivery
+            // 传统延时消息调度方案，根据 delayLevel
+            // PROPERTY_DELAY_TIME_LEVEL
             if (msg.getDelayTimeLevel() > 0) {
+                // Backup real topic（PROPERTY_REAL_TOPIC）, queueId（PROPERTY_REAL_QUEUE_ID）
+                // 设置延时消息 topic ： RMQ_SYS_SCHEDULE_TOPIC
+                // 根据 delayLevel 设置 delayLevel2QueueId
                 transformDelayLevelMessage(brokerController, msg);
             }
         }
@@ -154,8 +170,12 @@ public class HookUtils {
     private static boolean isRolledTimerMessage(MessageExtBrokerInner msg) {
         return TimerMessageStore.TIMER_TOPIC.equals(msg.getTopic());
     }
-
+    // 是否为时间轮调度延时消息
+    // PROPERTY_TIMER_DELIVER_MS
+    // PROPERTY_TIMER_DELAY_MS
+    // PROPERTY_TIMER_DELAY_SEC
     public static boolean checkIfTimerMessage(MessageExtBrokerInner msg) {
+        // 根据 delayLevel 来调度
         if (msg.getDelayTimeLevel() > 0) {
             if (null != msg.getProperty(MessageConst.PROPERTY_TIMER_DELIVER_MS)) {
                 MessageAccessor.clearProperty(msg, MessageConst.PROPERTY_TIMER_DELIVER_MS);
@@ -180,6 +200,7 @@ public class HookUtils {
         MessageExtBrokerInner msg) {
         //do transform
         int delayLevel = msg.getDelayTimeLevel();
+        // 投递时间戳
         long deliverMs;
         try {
             if (msg.getProperty(MessageConst.PROPERTY_TIMER_DELAY_SEC) != null) {
@@ -192,13 +213,17 @@ public class HookUtils {
         } catch (Exception e) {
             return new PutMessageResult(PutMessageStatus.WHEEL_TIMER_MSG_ILLEGAL, null);
         }
+        // deliverMs <= currentTimeMillis 直接投递
         if (deliverMs > System.currentTimeMillis()) {
+            // timerMaxDelaySec = 3600 * 24 * 3
+            // 延时时间不能超过 3 天
             if (delayLevel <= 0 && deliverMs - System.currentTimeMillis() > brokerController.getMessageStoreConfig().getTimerMaxDelaySec() * 1000L) {
                 return new PutMessageResult(PutMessageStatus.WHEEL_TIMER_MSG_ILLEGAL, null);
             }
-
+            // 1000
             int timerPrecisionMs = brokerController.getMessageStoreConfig().getTimerPrecisionMs();
             if (deliverMs % timerPrecisionMs == 0) {
+                // 这样可以抵消一下时间轮调度延时
                 deliverMs -= timerPrecisionMs;
             } else {
                 deliverMs = deliverMs / timerPrecisionMs * timerPrecisionMs;
@@ -211,14 +236,18 @@ public class HookUtils {
             MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
             MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
             msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
+            // rmq_sys_wheel_timer
             msg.setTopic(TimerMessageStore.TIMER_TOPIC);
+            // 只有一个队列
             msg.setQueueId(0);
         } else if (null != msg.getProperty(MessageConst.PROPERTY_TIMER_DEL_UNIQKEY)) {
             return new PutMessageResult(PutMessageStatus.WHEEL_TIMER_MSG_ILLEGAL, null);
         }
         return null;
     }
-
+    // Backup real topic（PROPERTY_REAL_TOPIC）, queueId（PROPERTY_REAL_QUEUE_ID）
+    // 设置延时消息 topic ： RMQ_SYS_SCHEDULE_TOPIC
+    // 根据 delayLevel 设置 delayLevel2QueueId
     public static void transformDelayLevelMessage(BrokerController brokerController, MessageExtBrokerInner msg) {
 
         if (msg.getDelayTimeLevel() > brokerController.getScheduleMessageService().getMaxDelayLevel()) {
@@ -229,8 +258,10 @@ public class HookUtils {
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_TOPIC, msg.getTopic());
         MessageAccessor.putProperty(msg, MessageConst.PROPERTY_REAL_QUEUE_ID, String.valueOf(msg.getQueueId()));
         msg.setPropertiesString(MessageDecoder.messageProperties2String(msg.getProperties()));
-
+        // 设置延时消息 topic ： RMQ_SYS_SCHEDULE_TOPIC
         msg.setTopic(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC);
+        // 根据 delayLevel 设置 delayLevel2QueueId
+        // RMQ_SYS_SCHEDULE_TOPIC 有 18 个队列对应 18 级 delayLevel
         msg.setQueueId(ScheduleMessageService.delayLevel2QueueId(msg.getDelayTimeLevel()));
     }
 

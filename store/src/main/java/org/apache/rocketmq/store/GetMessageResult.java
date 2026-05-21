@@ -22,27 +22,36 @@ import java.util.Collections;
 import java.util.List;
 
 public class GetMessageResult {
-
+    // 消息的 SelectMappedBufferResult 封装
     private final List<SelectMappedBufferResult> messageMapedList;
-    private final List<ByteBuffer> messageBufferList;
+    // 消息的 mappedByteBuffer 原生视图
+    private final List<ByteBuffer> messageBufferList; // page cache
+    // 消息索引在 consume queue 中的 index (全局)
     private final List<Long> messageQueueOffset;
 
     private GetMessageStatus status;
+    // 下一次应该从哪里开始拉取消息，该 offset 为消息在 consume queue 中的全局 index
     private long nextBeginOffset;
+    // 本次拉取的消息范围，也就是本次拉取消息所在的 consumer queue 最大的 maxOffset 与最小的 minOffset
     private long minOffset;
     private long maxOffset;
-
+    // 所有消息的 size 总大小
     private int bufferTotalSize = 0;
-
+    // 消息个数
     private int messageCount = 0;
-
+    // 在内存中的消息量是总体物理内存的 40% （从 commitlog 的 maxOffsetPy 往前推 40%的总物理内存量）
+    // 如果剩余的消息总量超过了 40% 的总内存，那么这部分消息可能有的在磁盘中，那么就建议从 slave 拉取
+    // 防止 master 的冷读
     private boolean suggestPullingFromSlave = false;
 
     private int msgCount4Commercial = 0;
     private int commercialSizePerMsg = 4 * 1024;
-
+    // 1. 开启 ColdDataFlowControl
+    // 2. 非系统 consumerGroup 拉取消息
+    // 3. 拉取的消息不在 page cache 中
+    // 统计 result 中的 cold data 大小
     private long coldDataSum = 0L;
-
+    // 在本次消息拉取过程中通过 SQL92 表达式过滤出去的不匹配消息个数
     private int filterMessageCount;
 
     public static final GetMessageResult NO_MATCH_LOGIC_QUEUE =
@@ -128,6 +137,7 @@ public class GetMessageResult {
         this.msgCount4Commercial += (int) Math.ceil(
             mapedBuffer.getSize() /  (double)commercialSizePerMsg);
         this.messageCount++;
+        // 消息索引在 consume queue 中的 index (全局)
         this.messageQueueOffset.add(queueOffset);
     }
 

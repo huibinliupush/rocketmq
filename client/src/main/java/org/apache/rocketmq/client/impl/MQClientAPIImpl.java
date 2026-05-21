@@ -825,6 +825,7 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
             @Override
             public void operationSucceed(RemotingCommand response) {
                 try {
+                    // 处理从 broker 拉取下来的消息转换为 PopResult
                     PopResult popResult = MQClientAPIImpl.this.processPopResponse(brokerName, response, requestHeader.getTopic(), requestHeader);
                     popCallback.onSuccess(popResult);
                 } catch (Exception e) {
@@ -1055,13 +1056,16 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
             case ResponseCode.SUCCESS:
                 popStatus = PopStatus.FOUND;
                 ByteBuffer byteBuffer = ByteBuffer.wrap(response.getBody());
+                // 将 broker commitlog 中的消息字节转换为 MessageExt
+                // 解码消息体，重新生成新的 msgId ：storehost + CommitLogOffset （返回给客户端的 msgId）
                 msgFoundList = MessageDecoder.decodesBatch(
                     byteBuffer,
-                    clientConfig.isDecodeReadBody(),
-                    clientConfig.isDecodeDecompressBody(),
+                    clientConfig.isDecodeReadBody(),// true
+                    clientConfig.isDecodeDecompressBody(), // true
                     true);
                 break;
             case ResponseCode.POLLING_FULL:
+                // PopRequest 太多了
                 popStatus = PopStatus.POLLING_FULL;
                 break;
             case ResponseCode.POLLING_TIMEOUT:
@@ -1087,27 +1091,48 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
         if (requestHeader instanceof PopMessageRequestHeader) {
             popResult.setInvisibleTime(responseHeader.getInvisibleTime());
             popResult.setPopTime(responseHeader.getPopTime());
+            // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+            // 0->queueId->startOffset
+            // 从多个 queue 拉消息就对应多条记录 ；分割
+            // 0@queueId -> startOffset
             startOffsetInfo = ExtraInfoUtil.parseStartOffsetInfo(responseHeader.getStartOffsetInfo());
+            // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+            // 0->queueId-> msgQueueOffsets
+            // 从多个 queue 拉消息就对应多条记录
+            // 0@queueId -> ArrayList（拉取到的所有 message 的 queueOffset）
             msgOffsetInfo = ExtraInfoUtil.parseMsgOffsetInfo(responseHeader.getMsgOffsetInfo());
+            // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+            // 0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
+            // 拉取了多少条顺序消息就对应多少记录
+            // 0@qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
+            // 拉取到的顺序消息对应的以被消费的次数
             orderCountInfo = ExtraInfoUtil.parseOrderCountInfo(responseHeader.getOrderCountInfo());
         }
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // key : 1@QueueId
+        // value: queue 中消息的 queueOffset集合
         Map<String/*topicMark@queueId*/, List<Long>/*msg queueOffset*/> sortMap
             = buildQueueOffsetSortedMap(topic, msgFoundList);
         Map<String, String> map = new HashMap<>(5);
+        // 遍历拉取到的所有消息
         for (MessageExt messageExt : msgFoundList) {
             if (requestHeader instanceof PopMessageRequestHeader) {
                 if (startOffsetInfo == null) {
                     // we should set the check point info to extraInfo field , if the command is popMsg
                     // find pop ck offset
+                    // Topic QueueId
                     String key = messageExt.getTopic() + messageExt.getQueueId();
                     if (!map.containsKey(messageExt.getTopic() + messageExt.getQueueId())) {
+                        // pop check point : QueueOffset popTime invisibleTime reviveQid 1 brokerName queueId
                         map.put(key, ExtraInfoUtil.buildExtraInfo(messageExt.getQueueOffset(), responseHeader.getPopTime(), responseHeader.getInvisibleTime(), responseHeader.getReviveQid(),
                             messageExt.getTopic(), brokerName, messageExt.getQueueId()));
 
                     }
                     messageExt.getProperties().put(MessageConst.PROPERTY_POP_CK, map.get(key) + MessageConst.KEY_SEPARATOR + messageExt.getQueueOffset());
                 } else {
+                    // 只有 retry topic 才会构建 PROPERTY_POP_CK
                     if (messageExt.getProperty(MessageConst.PROPERTY_POP_CK) == null) {
+                        // Normal Topic
                         final String queueIdKey;
                         final String queueOffsetKey;
                         final int index;
@@ -1134,19 +1159,26 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
                                     responseHeader.getReviveQid(), topic, brokerName, 0, msgQueueOffset)
                             );
                         } else {
+                            // 0@QueueId
                             queueIdKey = ExtraInfoUtil.getStartOffsetInfoMapKey(messageExt.getTopic(), messageExt.getQueueId());
+                            // 0@qo(QUEUE_OFFSET)queueId%queueOffset
                             queueOffsetKey = ExtraInfoUtil.getQueueOffsetMapKey(messageExt.getTopic(), messageExt.getQueueId(), messageExt.getQueueOffset());
+                            // 获取消息在消息集合中的 index
                             index = sortMap.get(queueIdKey).indexOf(messageExt.getQueueOffset());
                             msgQueueOffset = msgOffsetInfo.get(queueIdKey).get(index);
                             if (msgQueueOffset != messageExt.getQueueOffset()) {
                                 log.warn("Queue offset[{}] of msg is strange, not equal to the stored in msg, {}", msgQueueOffset, messageExt);
                             }
+                            // 为 Normal Topic 构建 PROPERTY_POP_CK
+                            // startOffset popTime invisibleTime reviveQid 0 brokerName queueId msgQueueOffset
                             messageExt.getProperties().put(MessageConst.PROPERTY_POP_CK,
                                 ExtraInfoUtil.buildExtraInfo(startOffsetInfo.get(queueIdKey), responseHeader.getPopTime(), responseHeader.getInvisibleTime(),
                                     responseHeader.getReviveQid(), messageExt.getTopic(), brokerName, messageExt.getQueueId(), msgQueueOffset)
                             );
                         }
+                        // 处理 FIFO 消息
                         if (((PopMessageRequestHeader) requestHeader).isOrder() && orderCountInfo != null) {
+                            // 消息已经被消费的次数
                             Integer count = orderCountInfo.get(queueOffsetKey);
                             if (count == null) {
                                 count = orderCountInfo.get(queueIdKey);
@@ -1174,6 +1206,9 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
      * @return sorted map, key is topicMark@queueId, value is sorted msg queueOffset list
      */
     private static Map<String, List<Long>> buildQueueOffsetSortedMap(String topic, List<MessageExt> msgFoundList) {
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // key : 1@QueueId
+        // value: queue 中消息的 queueOffset集合
         Map<String/*topicMark@queueId*/, List<Long>/*msg queueOffset*/> sortMap = new HashMap<>(16);
         for (MessageExt messageExt : msgFoundList) {
             final String key;
@@ -1192,6 +1227,10 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
             }
             // Value of POP_CK is used to determine whether it is a pop retry,
             // cause topic could be rewritten by broker.
+
+            // PROPERTY_POP_CK ：retry topic 中的消息需要添加这个属性
+            // 值为：startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset
+            // key : 1@QueueId
             key = ExtraInfoUtil.getStartOffsetInfoMapKey(messageExt.getTopic(),
                 messageExt.getProperty(MessageConst.PROPERTY_POP_CK), messageExt.getQueueId());
             if (!sortMap.containsKey(key)) {

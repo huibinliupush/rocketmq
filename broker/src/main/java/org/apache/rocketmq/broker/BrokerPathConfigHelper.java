@@ -54,6 +54,7 @@ public class BrokerPathConfigHelper {
     public static String getSubscriptionGroupPath(final String rootDir) {
         return getConfigDir(rootDir) + "subscriptionGroup.json";
     }
+    // user.home/store/config/timercheck
     public static String getTimerCheckPath(final String rootDir) {
         return getConfigDir(rootDir) + "timercheck";
     }

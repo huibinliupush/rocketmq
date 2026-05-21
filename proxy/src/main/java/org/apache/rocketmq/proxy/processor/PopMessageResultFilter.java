@@ -23,7 +23,9 @@ import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 public interface PopMessageResultFilter {
 
     enum FilterResult {
+        // 消费次数超过了 maxAttempts，发送到死信队列
         TO_DLQ,
+        // 不会出现这种情况，broker 都已经过滤好了
         NO_MATCH,
         MATCH
     }

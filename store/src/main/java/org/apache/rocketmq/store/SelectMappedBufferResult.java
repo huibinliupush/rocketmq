@@ -28,13 +28,17 @@ public class SelectMappedBufferResult {
     private int size;
 
     protected MappedFile mappedFile;
-
+    // 是否在 page cache 中
     private boolean isInCache = true;
 
     public SelectMappedBufferResult(long startOffset, ByteBuffer byteBuffer, int size, MappedFile mappedFile) {
+        // 全局 offset (字节)
         this.startOffset = startOffset;
+        // mappedByteBuffer 视图 buffer (position ,limit 已经重新设置)
         this.byteBuffer = byteBuffer;
+        // 视图 buffer 大小
         this.size = size;
+        // consumer queue 文件
         this.mappedFile = mappedFile;
     }
 

@@ -90,6 +90,10 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         SendMessageContext sendMessageContext;
         switch (request.getCode()) {
             case RequestCode.CONSUMER_SEND_MSG_BACK:
+                // 发送死信队列
+                // 消息消费次数超过了 maxAttempt
+                // 将消息发送到 RetryTopic: %RETRY%consumerGroup 或者 DLQTopic : %DLQ%consumerGroup
+                // 一个 consumerGroup 对应一个死信队列 DLQTopic : %DLQ%consumerGroup
                 return this.consumerSendMsgBack(ctx, request);
             default:
                 // SEND_MESSAGE,SEND_MESSAGE_V2,SEND_BATCH_MESSAGE

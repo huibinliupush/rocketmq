@@ -36,11 +36,16 @@ import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 public class ConsumerGroupInfo {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final String groupName;
+    // 消费者组订阅的所有 topic 以及 FilterExpression
+    // 消费者组的订阅关系
+    // 这里也包括消费者组的 retryTopic 及其订阅关系（sub_all）订阅所有重试消息（因为第一次订阅的时候已经全部过滤了，重试消息不需要再过滤）
     private final ConcurrentMap<String/* Topic */, SubscriptionData> subscriptionTable =
         new ConcurrentHashMap<>();
     private final ConcurrentMap<Channel, ClientChannelInfo> channelInfoTable =
         new ConcurrentHashMap<>(16);
+    // ConsumeType.CONSUME_POP
     private volatile ConsumeType consumeType;
+    // MessageModel.CLUSTERING
     private volatile MessageModel messageModel;
     private volatile ConsumeFromWhere consumeFromWhere;
     private volatile long lastUpdateTimestamp = System.currentTimeMillis();

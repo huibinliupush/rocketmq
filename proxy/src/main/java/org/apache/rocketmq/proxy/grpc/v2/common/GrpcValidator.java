@@ -90,6 +90,7 @@ public class GrpcValidator {
         if (invisibleTime < minInvisibleTime) {
             throw new GrpcProxyException(Code.ILLEGAL_INVISIBLE_TIME, "the invisibleTime is too small. min is " + minInvisibleTime);
         }
+        // 12h
         long maxInvisibleTime = ConfigurationManager.getProxyConfig().getMaxInvisibleTimeMills();
         if (maxInvisibleTime <= 0) {
             return;

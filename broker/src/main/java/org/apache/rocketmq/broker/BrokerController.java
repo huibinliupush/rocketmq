@@ -193,12 +193,14 @@ public class BrokerController {
     private final AuthConfig authConfig;
     protected ConsumerOffsetManager consumerOffsetManager;
     protected final BroadcastOffsetManager broadcastOffsetManager;
+    // 管理所有消费者组相关信息
     protected final ConsumerManager consumerManager;
     protected final ConsumerFilterManager consumerFilterManager;
     protected final ConsumerOrderInfoManager consumerOrderInfoManager;
     protected final PopInflightMessageCounter popInflightMessageCounter;
     protected final PopConsumerService popConsumerService;
     protected final ProducerManager producerManager;
+    // 传统延时消息的核心实现，负责投递到期的延时消息
     protected final ScheduleMessageService scheduleMessageService;
     // ClientHousekeepingService
     protected final ClientHousekeepingService clientHousekeepingService;
@@ -230,7 +232,9 @@ public class BrokerController {
     // 10000
     protected final BlockingQueue<Runnable> sendThreadPoolQueue;
     protected final BlockingQueue<Runnable> putThreadPoolQueue;
+    // 100000
     protected final BlockingQueue<Runnable> ackThreadPoolQueue;
+    // 100000
     protected final BlockingQueue<Runnable> pullThreadPoolQueue;
     protected final BlockingQueue<Runnable> litePullThreadPoolQueue;
     protected final BlockingQueue<Runnable> replyThreadPoolQueue;
@@ -260,9 +264,11 @@ public class BrokerController {
     // https://chat.deepseek.com/a/chat/s/922add6b-b222-4e2f-93ea-ab593f4f9e40
     protected TopicQueueMappingManager topicQueueMappingManager;
     protected ExecutorService sendMessageExecutor;
+    // 16 + PROCESSOR_NUMBER * 2 , 10万队列
     protected ExecutorService pullMessageExecutor;
     protected ExecutorService litePullMessageExecutor;
     protected ExecutorService putMessageFutureExecutor;
+    // 16 线程， 100000队列
     protected ExecutorService ackMessageExecutor;
     protected ExecutorService replyMessageExecutor;
     protected ExecutorService queryMessageExecutor;
@@ -369,6 +375,8 @@ public class BrokerController {
             this.subscriptionGroupManager = messageStoreConfig.isEnableLmq() ? new RocksDBLmqSubscriptionGroupManager(this) : new RocksDBSubscriptionGroupManager(this);
             this.consumerOffsetManager = new RocksDBConsumerOffsetManager(this);
         } else {
+            // 初始化系统级 topic 包括 brokerClusterName
+            // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
             this.topicConfigManager = messageStoreConfig.isEnableLmq() ? new LmqTopicConfigManager(this) : new TopicConfigManager(this);
             this.subscriptionGroupManager = messageStoreConfig.isEnableLmq() ? new LmqSubscriptionGroupManager(this) : new SubscriptionGroupManager(this);
             this.consumerOffsetManager = messageStoreConfig.isEnableLmq() ? new LmqConsumerOffsetManager(this) : new ConsumerOffsetManager(this);
@@ -404,6 +412,7 @@ public class BrokerController {
         // 响应 Netty Event
         this.clientHousekeepingService = new ClientHousekeepingService(this);
         this.broker2Client = new Broker2Client(this);
+        // 传统延时消息的核心实现，负责投递到期的延时消息
         this.scheduleMessageService = new ScheduleMessageService(this);
         this.coldDataPullRequestHoldService = new ColdDataPullRequestHoldService(this);
         this.coldDataCgCtrService = new ColdDataCgCtrService(this);
@@ -421,9 +430,10 @@ public class BrokerController {
         this.sendThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getSendThreadPoolQueueCapacity());
         // 10000
         this.putThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getPutThreadPoolQueueCapacity());
+        // 100000
         this.pullThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getPullThreadPoolQueueCapacity());
         this.litePullThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getLitePullThreadPoolQueueCapacity());
-
+        // 100000
         this.ackThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getAckThreadPoolQueueCapacity());
         this.replyThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getReplyThreadPoolQueueCapacity());
         this.queryThreadPoolQueue = new LinkedBlockingQueue<>(this.brokerConfig.getQueryThreadPoolQueueCapacity());
@@ -552,11 +562,11 @@ public class BrokerController {
             new ThreadFactoryImpl("SendMessageThread_", getBrokerIdentity()));
 
         this.pullMessageExecutor = ThreadUtils.newThreadPoolExecutor(
-            this.brokerConfig.getPullMessageThreadPoolNums(),
+            this.brokerConfig.getPullMessageThreadPoolNums(), // 16 + PROCESSOR_NUMBER * 2
             this.brokerConfig.getPullMessageThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
-            this.pullThreadPoolQueue,
+            this.pullThreadPoolQueue,// 100000
             new ThreadFactoryImpl("PullMessageThread_", getBrokerIdentity()));
 
         this.litePullMessageExecutor = ThreadUtils.newThreadPoolExecutor(
@@ -576,11 +586,11 @@ public class BrokerController {
             new ThreadFactoryImpl("PutMessageThread_", getBrokerIdentity()));
 
         this.ackMessageExecutor = ThreadUtils.newThreadPoolExecutor(
-            this.brokerConfig.getAckMessageThreadPoolNums(),
+            this.brokerConfig.getAckMessageThreadPoolNums(),// 16
             this.brokerConfig.getAckMessageThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
-            this.ackThreadPoolQueue,
+            this.ackThreadPoolQueue,// 100000
             new ThreadFactoryImpl("AckMessageThread_", getBrokerIdentity()));
 
         this.queryMessageExecutor = ThreadUtils.newThreadPoolExecutor(
@@ -848,7 +858,7 @@ public class BrokerController {
         }
         // System.getProperty("user.home") + File.separator + "store" /config/topics.json
         result = result && this.topicConfigManager.load();
-        // topicQueueMapping.json
+        // topicQueueMapping.json 用于 static topic
         result = result && this.topicQueueMappingManager.load();
         // consumerOffset.json
         result = result && this.consumerOffsetManager.load();
@@ -869,6 +879,7 @@ public class BrokerController {
                 defaultMessageStore = new RocksDBMessageStore(this.messageStoreConfig, this.brokerStatsManager, this.messageArrivingListener, this.brokerConfig, topicConfigManager.getTopicConfigTable());
             } else {
                 defaultMessageStore = new DefaultMessageStore(this.messageStoreConfig, this.brokerStatsManager, this.messageArrivingListener, this.brokerConfig, topicConfigManager.getTopicConfigTable());
+                // false
                 if (messageStoreConfig.isRocksdbCQDoubleWriteEnable()) {
                     defaultMessageStore.enableRocksdbCQWrite();
                 }
@@ -888,6 +899,7 @@ public class BrokerController {
                 messageStoreConfig, brokerStatsManager, messageArrivingListener, brokerConfig, configuration);
             // 构建 AbstractPluginMessageStore 责任链，最后一个为 DefaultMessageStore
             // org.apache.rocketmq.common.BrokerConfig.messageStorePlugIn 参数指定自定义的 PluginMessageStore 类
+            // 多个 PluginMessageStore 类用 , 分割，默认为 null
             this.messageStore = MessageStoreFactory.build(context, defaultMessageStore);
             this.messageStore.getDispatcherList().addFirst(new CommitLogDispatcherCalcBitMap(this.brokerConfig, this.consumerFilterManager));
             if (messageStoreConfig.isTimerWheelEnable()) {
@@ -939,11 +951,14 @@ public class BrokerController {
         }
 
         if (messageStoreConfig.isTimerWheelEnable()) {
+            // 5.0 基于时间轮的延时消息调度方案
             result = result && this.timerMessageStore.load();
         }
 
         //scheduleMessageService load after messageStore load success
         // 加载自 storePath/config/delayOffset.json 文件
+        // 传统的延时消息调度方案
+        // 传统延时消息的核心实现，负责投递到期的延时消息
         result = result && this.scheduleMessageService.load();
 
         for (BrokerAttachedPlugin brokerAttachedPlugin : brokerAttachedPlugins) {
@@ -1059,6 +1074,7 @@ public class BrokerController {
             @Override
             public PutMessageResult executeBeforePutMessage(MessageExt msg) {
                 if (msg instanceof MessageExtBrokerInner) {
+                    // 处理延时消息以及事务消息的转换
                     return HookUtils.handleScheduleMessage(BrokerController.this, (MessageExtBrokerInner) msg);
                 }
                 return null;
@@ -1714,6 +1730,7 @@ public class BrokerController {
         }
 
         if (this.timerMessageStore != null) {
+            // 5.0 时间轮延时消息调度方案
             this.timerMessageStore.start();
         }
 
@@ -1751,14 +1768,16 @@ public class BrokerController {
 
         if (this.popMessageProcessor != null) {
             this.popMessageProcessor.getPopLongPollingService().start();
-            if (brokerConfig.isPopConsumerFSServiceInit()) {
+            if (brokerConfig.isPopConsumerFSServiceInit()) { // true
                 this.popMessageProcessor.getPopBufferMergeService().start();
             }
             this.popMessageProcessor.getQueueLockManager().start();
         }
 
         if (this.ackMessageProcessor != null) {
+            // true
             if (brokerConfig.isPopConsumerFSServiceInit()) {
+                // 启动 popReviveService 开始消费 reviveTopic
                 this.ackMessageProcessor.startPopReviveService();
             }
         }

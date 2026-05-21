@@ -221,6 +221,8 @@ public abstract class NettyRemotingAbstract {
     public static void writeResponse(Channel channel, RemotingCommand request, @Nullable RemotingCommand response,
         Consumer<Future<?>> callback) {
         if (response == null) {
+            // 表示已经从 page cache（通过 FileRegion 封装 commitlog 原始 mappedByteBuffer） 中直接发送了
+            // see: org.apache.rocketmq.broker.processor.PopMessageProcessor.processRequest
             return;
         }
         AttributesBuilder attributesBuilder = RemotingMetricsManager.newAttributesBuilder()

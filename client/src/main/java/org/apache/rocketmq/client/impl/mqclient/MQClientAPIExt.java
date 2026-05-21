@@ -220,7 +220,8 @@ public class MQClientAPIExt extends MQClientAPIImpl {
         }
         return future;
     }
-
+    // 将消息发送到 RetryTopic: %RETRY%consumerGroup 或者 DLQTopic : %DLQ%consumerGroup
+    // 一个 consumerGroup 对应一个死信队列 DLQTopic : %DLQ%consumerGroup
     public CompletableFuture<RemotingCommand> sendMessageBackAsync(
         String brokerAddr,
         ConsumerSendMsgBackRequestHeader requestHeader,

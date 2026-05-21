@@ -233,7 +233,7 @@ public class ProducerProcessor extends AbstractProcessor {
 
         return requestHeader;
     }
-
+    // messageId : storehost + CommitLogOffset
     public CompletableFuture<RemotingCommand> forwardMessageToDeadLetterQueue(ProxyContext ctx, ReceiptHandle handle,
         String messageId, String groupName, String topicName, long timeoutMillis) {
         CompletableFuture<RemotingCommand> future = new CompletableFuture<>();
@@ -247,17 +247,22 @@ public class ProducerProcessor extends AbstractProcessor {
             consumerSendMsgBackRequestHeader.setGroup(groupName);
             consumerSendMsgBackRequestHeader.setDelayLevel(-1);
             consumerSendMsgBackRequestHeader.setOriginMsgId(messageId);
+            // 如果该消息是重试消息，那么需要还原 topic 为 retry topic （ %RETRY%consumerGroup_topic）
+            // broker 端在拉取 retry message 之后会将 retry topic 转换为 normal topic
             consumerSendMsgBackRequestHeader.setOriginTopic(handle.getRealTopic(topicName, groupName));
             consumerSendMsgBackRequestHeader.setMaxReconsumeTimes(0);
-
+            // 将消息发送到 RetryTopic: %RETRY%consumerGroup 或者 DLQTopic : %DLQ%consumerGroup
+            // 一个 consumerGroup 对应一个死信队列 DLQTopic : %DLQ%consumerGroup
             future = this.serviceManager.getMessageService().sendMessageBack(
                 ctx,
                 handle,
-                messageId,
+                messageId,// storehost + CommitLogOffset
                 consumerSendMsgBackRequestHeader,
                 timeoutMillis
             ).whenCompleteAsync((remotingCommand, t) -> {
                 if (t == null && remotingCommand.getCode() == ResponseCode.SUCCESS) {
+                    // 消息已经转移到了 RetryTopic 或者 DLQTopic
+                    // 那么原来 topic 的消息就需要 ack
                     this.messagingProcessor.ackMessage(ctx, handle, messageId,
                         groupName, topicName, timeoutMillis);
                 }

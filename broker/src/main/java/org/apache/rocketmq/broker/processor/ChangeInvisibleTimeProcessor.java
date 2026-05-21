@@ -73,9 +73,10 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
 
     private RemotingCommand processRequest(final Channel channel, RemotingCommand request,
         boolean brokerAllowSuspend) throws RemotingCommandException {
-
+        // 添加一个新的 checkpoint , 修改它的 InvisibleTim
+        // ack 原来的消息，防止原来的消息被重新投递，从而达到修改消息 InvisibleTim 的逻辑
         CompletableFuture<RemotingCommand> responseFuture = processRequestAsync(channel, request, brokerAllowSuspend);
-
+        // false
         if (brokerController.getBrokerConfig().isAppendCkAsync() && brokerController.getBrokerConfig().isAppendAckAsync()) {
             responseFuture.thenAccept(response -> doResponse(channel, request, response)).exceptionally(throwable -> {
                 RemotingCommand response = RemotingCommand.createResponseCommand(ChangeInvisibleTimeResponseHeader.class);
@@ -107,6 +108,7 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
         response.setCode(ResponseCode.SUCCESS);
         response.setOpaque(request.getOpaque());
         final ChangeInvisibleTimeResponseHeader responseHeader = (ChangeInvisibleTimeResponseHeader) response.readCustomHeader();
+        // 注意到这里 topic 就是真正的 topic 了， 比如 retry topic
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
         if (null == topicConfig) {
             POP_LOGGER.error("The topic {} not exist, consumer: {} ", requestHeader.getTopic(), RemotingHelper.parseChannelRemoteAddr(channel));
@@ -134,8 +136,9 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
             response.setCode(ResponseCode.NO_MESSAGE);
             return CompletableFuture.completedFuture(response);
         }
-
+        // reciveHandler
         String[] extraInfo = ExtraInfoUtil.split(requestHeader.getExtraInfo());
+        // rockDB 版
         if (brokerController.getBrokerConfig().isPopConsumerKVServiceEnable()) {
             if (ExtraInfoUtil.isOrder(extraInfo)) {
                 return this.processChangeInvisibleTimeForOrderNew(
@@ -155,21 +158,24 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
             }
             return CompletableFuture.completedFuture(response);
         }
-
+        // FIFO 消息
         if (ExtraInfoUtil.isOrder(extraInfo)) {
             return CompletableFuture.completedFuture(
                 processChangeInvisibleTimeForOrder(requestHeader, extraInfo, response, responseHeader));
         }
-
+        // 非 FIFO 消息
         // add new ck
         long now = System.currentTimeMillis();
+
+        // 添加一个新的 checkpoint , 修改它的 InvisibleTim
+        // ack 原来的消息，防止原来的消息被重新投递，从而达到修改消息 InvisibleTim 的逻辑
         CompletableFuture<Boolean> futureResult = appendCheckPointThenAckOrigin(requestHeader,
             ExtraInfoUtil.getReviveQid(extraInfo), requestHeader.getQueueId(), requestHeader.getOffset(), now, extraInfo);
 
         return futureResult.thenCompose(result -> {
             if (result) {
                 responseHeader.setInvisibleTime(requestHeader.getInvisibleTime());
-                responseHeader.setPopTime(now);
+                responseHeader.setPopTime(now);// 最新的 popTime(当前时间戳)
                 responseHeader.setReviveQid(ExtraInfoUtil.getReviveQid(extraInfo));
             } else {
                 response.setCode(ResponseCode.SYSTEM_ERROR);
@@ -298,7 +304,8 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
             return false;
         });
     }
-
+    // 添加一个新的 checkpoint , 修改它的 InvisibleTim
+    // ack 原来的消息，防止原来的消息被重新投递，从而达到修改消息 InvisibleTim 的逻辑
     private CompletableFuture<Boolean> appendCheckPointThenAckOrigin(
         final ChangeInvisibleTimeRequestHeader requestHeader,
         int reviveQid,
@@ -309,7 +316,8 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
         PopCheckPoint ck = new PopCheckPoint();
         ck.setBitMap(0);
         ck.setNum((byte) 1);
-        ck.setPopTime(popTime);
+        ck.setPopTime(popTime); // 最新的 popTime(当前时间戳)
+        // 修改 InvisibleTime
         ck.setInvisibleTime(requestHeader.getInvisibleTime());
         ck.setStartOffset(offset);
         ck.setCId(requestHeader.getConsumerGroup());
@@ -324,7 +332,7 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
         msgInner.setBornTimestamp(System.currentTimeMillis());
         msgInner.setBornHost(this.brokerController.getStoreHost());
         msgInner.setStoreHost(this.brokerController.getStoreHost());
-        msgInner.setDeliverTimeMs(ck.getReviveTime() - PopAckConstants.ackTimeInterval);
+        msgInner.setDeliverTimeMs(ck.getReviveTime() - PopAckConstants.ackTimeInterval);// 添加新 check point 时的统一设置
         msgInner.getProperties().put(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX, PopMessageProcessor.genCkUniqueId(ck));
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));
         return this.brokerController.getEscapeBridge().asyncPutMessageToSpecificQueue(msgInner).thenCompose(putMessageResult -> {

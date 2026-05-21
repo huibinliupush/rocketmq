@@ -30,7 +30,7 @@ public class MessageExt extends Message {
     private String brokerName;
 
     private int queueId;
-
+    // TOTALSIZE
     private int storeSize;
     // 当前 messageQueue(queueId) 中最大的消息 index
     private long queueOffset;
@@ -40,10 +40,12 @@ public class MessageExt extends Message {
     // 服务端存储消息的时间
     private long storeTimestamp;
     private SocketAddress storeHost;
+    // storehost + CommitLogOffset
     private String msgId;
     private long commitLogOffset;
     // 由 broker 端生成
     private int bodyCRC;
+    // 只有顺序消息才会设置，表示消息已经被消费的次数
     private int reconsumeTimes;
 
     private long preparedTransactionOffset;

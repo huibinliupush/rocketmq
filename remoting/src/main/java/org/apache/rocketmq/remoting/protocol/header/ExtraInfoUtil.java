@@ -119,14 +119,18 @@ public class ExtraInfoUtil {
     }
 
     public static String buildExtraInfo(long ckQueueOffset, long popTime, long invisibleTime, int reviveQid, String topic, String brokerName, int queueId) {
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
         String t = getRetry(topic);
+        // QueueOffset popTime invisibleTime reviveQid 1 brokerName queueId
         return ckQueueOffset + MessageConst.KEY_SEPARATOR + popTime + MessageConst.KEY_SEPARATOR + invisibleTime + MessageConst.KEY_SEPARATOR + reviveQid + MessageConst.KEY_SEPARATOR + t
             + MessageConst.KEY_SEPARATOR + brokerName + MessageConst.KEY_SEPARATOR + queueId;
     }
 
     public static String buildExtraInfo(long ckQueueOffset, long popTime, long invisibleTime, int reviveQid, String topic, String brokerName, int queueId,
                                         long msgQueueOffset) {
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
         String t = getRetry(topic);
+        // startOffset popTime invisibleTime reviveQid 0 brokerName queueId msgQueueOffset
         return ckQueueOffset
             + MessageConst.KEY_SEPARATOR + popTime + MessageConst.KEY_SEPARATOR + invisibleTime
             + MessageConst.KEY_SEPARATOR + reviveQid + MessageConst.KEY_SEPARATOR + t
@@ -142,7 +146,8 @@ public class ExtraInfoUtil {
         if (stringBuilder.length() > 0) {
             stringBuilder.append(";");
         }
-
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // queueId->startOffset
         stringBuilder.append(getRetry(topic))
             .append(MessageConst.KEY_SEPARATOR).append(queueId)
             .append(MessageConst.KEY_SEPARATOR).append(startOffset);
@@ -156,7 +161,8 @@ public class ExtraInfoUtil {
         if (stringBuilder.length() > 0) {
             stringBuilder.append(";");
         }
-
+        // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // 0 -> queueId ——> orderCount(表示被消费的次数)
         stringBuilder.append(getRetry(topic))
                 .append(MessageConst.KEY_SEPARATOR).append(queueId)
                 .append(MessageConst.KEY_SEPARATOR).append(orderCount);
@@ -170,7 +176,8 @@ public class ExtraInfoUtil {
         if (stringBuilder.length() > 0) {
             stringBuilder.append(";");
         }
-
+        // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        //  0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount
         stringBuilder.append(getRetry(topic))
             .append(MessageConst.KEY_SEPARATOR).append(getQueueOffsetKeyValueKey(queueId, queueOffset))
             .append(MessageConst.KEY_SEPARATOR).append(orderCount);
@@ -184,7 +191,8 @@ public class ExtraInfoUtil {
         if (stringBuilder.length() > 0) {
             stringBuilder.append(";");
         }
-
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // queueId-> msgQueueOffsets
         stringBuilder.append(getRetry(topic))
             .append(MessageConst.KEY_SEPARATOR).append(queueId)
             .append(MessageConst.KEY_SEPARATOR);
@@ -196,7 +204,8 @@ public class ExtraInfoUtil {
             }
         }
     }
-
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+    // 0@queueId -> ArrayList（拉取到的所有 message 的 queueOffset）
     public static Map<String, List<Long>> parseMsgOffsetInfo(String msgOffsetInfo) {
         if (msgOffsetInfo == null || msgOffsetInfo.length() == 0) {
             return null;
@@ -209,53 +218,64 @@ public class ExtraInfoUtil {
         } else {
             array = msgOffsetInfo.split(";");
         }
-
+        // 0->queueId-> msgQueueOffsets
+        // 从多个 queue 拉消息就对应多条记录
         for (String one : array) {
+            // 0->queueId-> msgQueueOffsets
             String[] split = one.split(MessageConst.KEY_SEPARATOR);
             if (split.length != 3) {
                 throw new IllegalArgumentException("parse msgOffsetMap error, " + msgOffsetMap);
             }
+            // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+            // 0@queueId
             String key = split[0] + "@" + split[1];
             if (msgOffsetMap.containsKey(key)) {
                 throw new IllegalArgumentException("parse msgOffsetMap error, duplicate, " + msgOffsetMap);
             }
             msgOffsetMap.put(key, new ArrayList<>(8));
+            // ArrayList （拉取到的所有 message 的 queueOffset）
             String[] msgOffsets = split[2].split(",");
             for (String msgOffset : msgOffsets) {
                 msgOffsetMap.get(key).add(Long.valueOf(msgOffset));
             }
         }
-
+        // 0@queueId -> ArrayList（拉取到的所有 message 的 queueOffset）
         return msgOffsetMap;
     }
-
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+    // 0@queueId -> startOffset
     public static Map<String, Long> parseStartOffsetInfo(String startOffsetInfo) {
         if (startOffsetInfo == null || startOffsetInfo.length() == 0) {
             return null;
         }
+        // 0@queueId -> startOffset
         Map<String, Long> startOffsetMap = new HashMap<>(4);
         String[] array;
         if (startOffsetInfo.indexOf(";") < 0) {
+            // 多个记录用 ; 分割
             array = new String[]{startOffsetInfo};
         } else {
             array = startOffsetInfo.split(";");
         }
-
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // 0->queueId->startOffset
         for (String one : array) {
             String[] split = one.split(MessageConst.KEY_SEPARATOR);
             if (split.length != 3) {
                 throw new IllegalArgumentException("parse startOffsetInfo error, " + startOffsetInfo);
             }
+            // 0@queueId
             String key = split[0] + "@" + split[1];
             if (startOffsetMap.containsKey(key)) {
                 throw new IllegalArgumentException("parse startOffsetInfo error, duplicate, " + startOffsetInfo);
             }
             startOffsetMap.put(key, Long.valueOf(split[2]));
         }
-
+        // 0@queueId -> startOffset
         return startOffsetMap;
     }
-
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+    // 0@qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
     public static Map<String, Integer> parseOrderCountInfo(String orderCountInfo) {
         if (orderCountInfo == null || orderCountInfo.length() == 0) {
             return null;
@@ -267,19 +287,25 @@ public class ExtraInfoUtil {
         } else {
             array = orderCountInfo.split(";");
         }
-
+        // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+        // 0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
+        // 拉取了多少条顺序消息就对应多少记录
         for (String one : array) {
+            // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+            // 0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
             String[] split = one.split(MessageConst.KEY_SEPARATOR);
             if (split.length != 3) {
                 throw new IllegalArgumentException("parse orderCountInfo error, " + orderCountInfo);
             }
+            // 0@qo(QUEUE_OFFSET)queueId%queueOffset
             String key = split[0] + "@" + split[1];
             if (startOffsetMap.containsKey(key)) {
                 throw new IllegalArgumentException("parse orderCountInfo error, duplicate, " + orderCountInfo);
             }
+            // orderCount(表示消息被消费的次数)
             startOffsetMap.put(key, Integer.valueOf(split[2]));
         }
-
+        // 0@qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
         return startOffsetMap;
     }
 
@@ -288,21 +314,23 @@ public class ExtraInfoUtil {
     }
 
     public static String getStartOffsetInfoMapKey(String topic, String popCk, long key) {
+        // popCk[4]@key
         return getRetry(topic, popCk) + "@" + key;
     }
-
+    // qo(QUEUE_OFFSET)queueId%queueOffset
     public static String getQueueOffsetKeyValueKey(long queueId, long queueOffset) {
         return QUEUE_OFFSET + queueId + "%" + queueOffset;
     }
 
     public static String getQueueOffsetMapKey(String topic, long queueId, long queueOffset) {
+        // 0@qo(QUEUE_OFFSET)queueId%queueOffset
         return getRetry(topic) + "@" + getQueueOffsetKeyValueKey(queueId, queueOffset);
     }
 
     public static boolean isOrder(String[] extraInfo) {
         return ExtraInfoUtil.getReviveQid(extraInfo) == KeyBuilder.POP_ORDER_REVIVE_QUEUE;
     }
-
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
     private static String getRetry(String topic) {
         String t = NORMAL_TOPIC;
         if (KeyBuilder.isPopRetryTopicV2(topic)) {

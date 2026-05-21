@@ -23,6 +23,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import javax.annotation.Nonnull;
 
 public abstract class AbstractCacheLoader<K, V> extends CacheLoader<K, V> {
+    // 3 线程 100000 队列
     private final ThreadPoolExecutor cacheRefreshExecutor;
 
     public AbstractCacheLoader(ThreadPoolExecutor cacheRefreshExecutor) {
@@ -39,6 +40,7 @@ public abstract class AbstractCacheLoader<K, V> extends CacheLoader<K, V> {
                 return oldValue;
             }
         });
+        // 3 线程 100000 队列
         cacheRefreshExecutor.execute(task);
         return task;
     }

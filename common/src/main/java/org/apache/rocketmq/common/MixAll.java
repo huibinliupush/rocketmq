@@ -77,6 +77,7 @@ public class MixAll {
     public static final String CID_ONSAPI_PERMISSION_GROUP = "CID_ONSAPI_PERMISSION";
     public static final String CID_ONSAPI_OWNER_GROUP = "CID_ONSAPI_OWNER";
     public static final String CID_ONSAPI_PULL_GROUP = "CID_ONSAPI_PULL";
+    // 系统 topic 消费者组前缀
     public static final String CID_RMQ_SYS_PREFIX = "CID_RMQ_SYS_";
     public static final String IS_SUPPORT_HEART_BEAT_V2 = "IS_SUPPORT_HEART_BEAT_V2";
     public static final String IS_SUB_CHANGE = "IS_SUB_CHANGE";

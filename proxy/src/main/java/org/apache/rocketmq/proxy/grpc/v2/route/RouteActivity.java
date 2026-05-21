@@ -107,24 +107,30 @@ public class RouteActivity extends AbstractMessingActivity {
 
         try {
             validateTopicAndConsumerGroup(request.getTopic(), request.getGroup());
+            // 客户端中配置的 Endpoints，也就是 proxy 地址
             List<org.apache.rocketmq.proxy.common.Address> addressList = this.convertToAddressList(request.getEndpoints());
-
+            // 获取 topic 路由，路由中 brokerData 中的地址会全部被替换为 proxy 地址
             ProxyTopicRouteData proxyTopicRouteData = this.messagingProcessor.getTopicRouteDataForProxy(
                 ctx,
                 addressList,
                 request.getTopic().getName());
 
             boolean fifo = false;
+            // 获取 consuemrGroup 的 SubscriptionGroupConfig（消费者本地配置和远程 broker 配置合并）
             SubscriptionGroupConfig config = this.messagingProcessor.getSubscriptionGroupConfig(ctx,
                 request.getGroup().getName());
             if (config != null && config.isConsumeMessageOrderly()) {
                 fifo = true;
             }
-
+            // 一个 Assignment 对应一个 MessageQueue
             List<Assignment> assignments = new ArrayList<>();
-            // BrokerName（副本组名称） -> BrokerId（该副本组中的节点数）
+            // BrokerName（副本组名称） -> BrokerId
+            // topic 所在的所有 broker
             Map<String, Map<Long, Broker>> brokerMap = buildBrokerMap(proxyTopicRouteData.getBrokerDatas());
+            // topicQueueTable 中 topic 下的所有 QueueData（副本集维度）
+            // 副本集中的 queue 信息
             for (QueueData queueData : proxyTopicRouteData.getQueueDatas()) {
+                // 过滤可读 queue
                 if (PermName.isReadable(queueData.getPerm()) && queueData.getReadQueueNums() > 0) {
                     // 队列所在的副本组
                     Map<Long, Broker> brokerIdMap = brokerMap.get(queueData.getBrokerName());
@@ -132,22 +138,25 @@ public class RouteActivity extends AbstractMessingActivity {
                         // 该副本组的 master 节点
                         Broker broker = brokerIdMap.get(MixAll.MASTER_ID);
                         Permission permission = this.convertToPermission(queueData.getPerm());
+                        // 如果是 fifo 则收集所有副本集中的所有 queue
                         if (fifo) {
+                            // 副本集中的所有可读队列
                             for (int i = 0; i < queueData.getReadQueueNums(); i++) {
                                 MessageQueue defaultMessageQueue = MessageQueue.newBuilder()
                                     .setTopic(request.getTopic())
-                                    .setId(i)
+                                    .setId(i) // 确定的 queueId
                                     .setPermission(permission)
-                                    .setBroker(broker)
+                                    .setBroker(broker) // master
                                     .build();
                                 assignments.add(Assignment.newBuilder()
                                     .setMessageQueue(defaultMessageQueue)
                                     .build());
                             }
                         } else {
+                            // 非 fifo 则每个副本集只收集一个 queue, 并且 queueId 是 -1 ， 到了 broker 会随机选择 queue
                             MessageQueue defaultMessageQueue = MessageQueue.newBuilder()
                                 .setTopic(request.getTopic())
-                                .setId(-1)
+                                .setId(-1) // 后续再 broker 随机选择 queue
                                 .setPermission(permission)
                                 .setBroker(broker) // 队列所在副本组的 master 节点
                                 .build();

@@ -59,6 +59,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
         ReceiveMessageResponseStreamWriter writer = createWriter(ctx, responseObserver);
 
         try {
+            // 消费者本地订阅配置与远程 broker 消费者组订阅配置合并之后的结果
             Settings settings = this.grpcClientSettingsManager.getClientSettings(ctx);
             Subscription subscription = settings.getSubscription();
             boolean fifo = subscription.getFifo();
@@ -67,14 +68,17 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
 
             Long timeRemaining = ctx.getRemainingMs();
             long pollingTime;
+            // 20s
             if (request.hasLongPollingTimeout()) {
                 pollingTime = Durations.toMillis(request.getLongPollingTimeout());
             } else {
                 pollingTime = timeRemaining - Durations.toMillis(settings.getRequestTimeout()) / 2;
             }
+            // MinLongPollingTimeout = 5s
             if (pollingTime < config.getGrpcClientConsumerMinLongPollingTimeoutMillis()) {
                 pollingTime = config.getGrpcClientConsumerMinLongPollingTimeoutMillis();
             }
+            // MaxLongPollingTimeout = 20s
             if (pollingTime > config.getGrpcClientConsumerMaxLongPollingTimeoutMillis()) {
                 pollingTime = config.getGrpcClientConsumerMaxLongPollingTimeoutMillis();
             }
@@ -96,14 +100,16 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
             validateTopicAndConsumerGroup(request.getMessageQueue().getTopic(), request.getGroup());
             String topic = request.getMessageQueue().getTopic().getName();
             String group = request.getGroup().getName();
-
+            // SimpleConsumer 才会设置
             long actualInvisibleTime = Durations.toMillis(request.getInvisibleDuration());
             ProxyConfig proxyConfig = ConfigurationManager.getProxyConfig();
+            // enableProxyAutoRenew = true , requestAutoRenew = true
             if (proxyConfig.isEnableProxyAutoRenew() && request.getAutoRenew()) {
+                // 60s
                 actualInvisibleTime = proxyConfig.getDefaultInvisibleTimeMills();
             } else {
                 validateInvisibleTime(actualInvisibleTime,
-                    ConfigurationManager.getProxyConfig().getMinInvisibleTimeMillsForRecv());
+                    ConfigurationManager.getProxyConfig().getMinInvisibleTimeMillsForRecv());// 10s
             }
 
             FilterExpression filterExpression = request.getFilterExpression();
@@ -119,7 +125,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
             this.messagingProcessor.popMessage(
                     ctx,
                     new ReceiveMessageQueueSelector(
-                        request.getMessageQueue().getBroker().getName()
+                        request.getMessageQueue().getBroker().getName() // 客户端只选择从哪个副本集中拉取，具体哪个队列，由 broker 随机选取
                     ),
                     group,
                     topic,
@@ -133,10 +139,12 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
                     request.hasAttemptId() ? request.getAttemptId() : null,
                     timeRemaining
                 ).thenAccept(popResult -> {
+                    // enableProxyAutoRenew = true
                     if (proxyConfig.isEnableProxyAutoRenew() && request.getAutoRenew()) {
                         if (PopStatus.FOUND.equals(popResult.getPopStatus())) {
                             List<MessageExt> messageExtList = popResult.getMsgFoundList();
                             for (MessageExt messageExt : messageExtList) {
+                                // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
                                 String receiptHandle = messageExt.getProperty(MessageConst.PROPERTY_POP_CK);
                                 if (receiptHandle != null) {
                                     MessageReceiptHandle messageReceiptHandle =
@@ -167,7 +175,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
     }
 
     protected static class ReceiveMessageQueueSelector implements QueueSelector {
-
+        // 客户端只选择从哪个副本集中拉取，具体哪个队列，由 broker 随机选取
         private final String brokerName;
 
         public ReceiveMessageQueueSelector(String brokerName) {
@@ -181,6 +189,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
                 MessageQueueSelector messageQueueSelector = messageQueueView.getReadSelector();
 
                 if (StringUtils.isNotBlank(brokerName)) {
+                    // 从 brokerNameQueueMap 中选取 queue (每个副本集对应一个，其 queueId = -1 , 在 broker 中随机选取一个 queue)
                     addressableMessageQueue = messageQueueSelector.getQueueByBrokerName(brokerName);
                 }
 

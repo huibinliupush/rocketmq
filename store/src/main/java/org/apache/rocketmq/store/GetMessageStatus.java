@@ -33,6 +33,7 @@ public enum GetMessageStatus {
     OFFSET_TOO_SMALL,
 
     NO_MATCHED_LOGIC_QUEUE,
+    // broker 进行 long polling
 
     NO_MESSAGE_IN_QUEUE,
 

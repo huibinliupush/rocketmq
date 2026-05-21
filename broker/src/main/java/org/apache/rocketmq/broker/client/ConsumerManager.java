@@ -40,12 +40,16 @@ import org.apache.rocketmq.store.stats.BrokerStatsManager;
 
 public class ConsumerManager {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
+    // key : consumerGroup
     private final ConcurrentMap<String, ConsumerGroupInfo> consumerTable =
         new ConcurrentHashMap<>(1024);
+    // key : topic
     private final ConcurrentMap<String, Set<String>> topicGroupTable =
             new ConcurrentHashMap<>(1024);
+    // 消费者组相关信息
     private final ConcurrentMap<String, ConsumerGroupInfo> consumerCompensationTable =
         new ConcurrentHashMap<>(1024);
+    // ConsumerIdsChangeListenerImpl
     private final List<ConsumerIdsChangeListener> consumerIdsChangeListenerList = new CopyOnWriteArrayList<>();
     protected final BrokerStatsManager brokerStatsManager;
     private final long channelExpiredTimeout;
@@ -261,7 +265,7 @@ public class ConsumerManager {
                 callConsumerIdsChangeListener(ConsumerGroupEvent.CHANGE, group, consumerGroupInfo.getAllChannel());
             }
         }
-
+        // enableFastChannelEventProcess = false
         if (this.brokerConfig != null && this.brokerConfig.isEnableFastChannelEventProcess() && r1) {
             ClientChannelAttributeHelper.addConsumerGroup(clientChannelInfo.getChannel(), group);
         }

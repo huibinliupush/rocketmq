@@ -94,7 +94,7 @@ public interface MessagingProcessor extends StartAndShutdown {
     CompletableFuture<RemotingCommand> forwardMessageToDeadLetterQueue(
         ProxyContext ctx,
         ReceiptHandle handle,
-        String messageId,
+        String messageId,// storehost + CommitLogOffset
         String groupName,
         String topicName,
         long timeoutMillis

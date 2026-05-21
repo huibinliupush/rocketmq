@@ -187,6 +187,8 @@ public class ClientActivity extends AbstractMessingActivity {
             @Override
             public void onNext(ProxyContext ctx, TelemetryCommand request) {
                 try {
+                        // see TelemetryCommand protocal message 定义， oneOf command
+                    // gRPC 自动生成 CommandCase 方法
                     switch (request.getCommandCase()) {
                         case SETTINGS: {
                             processAndWriteClientSettings(ctx, request, responseObserver);
@@ -245,17 +247,20 @@ public class ClientActivity extends AbstractMessingActivity {
         GrpcClientChannel grpcClientChannel = null;
         Settings settings = request.getSettings();
         switch (settings.getPubSubCase()) {
-            case PUBLISHING:
+            case PUBLISHING:// producer
                 for (Resource topic : settings.getPublishing().getTopicsList()) {
                     validateTopic(topic);
                     String topicName = topic.getName();
+                    // 注册 producer
                     grpcClientChannel = registerProducer(ctx, topicName);
                     grpcClientChannel.setClientObserver(responseObserver);
                 }
                 break;
-            case SUBSCRIPTION:
+            case SUBSCRIPTION:// consumer
                 validateConsumerGroup(settings.getSubscription().getGroup());
+                // consumerGroup
                 String groupName = settings.getSubscription().getGroup().getName();
+                // 注册 consumerGroup 相关订阅信息
                 grpcClientChannel = registerConsumer(ctx, groupName, settings.getClientType(), settings.getSubscription().getSubscriptionsList(), true);
                 grpcClientChannel.setClientObserver(responseObserver);
                 break;
@@ -268,8 +273,14 @@ public class ClientActivity extends AbstractMessingActivity {
                 .asRuntimeException());
             return;
         }
+        // 从远程 broker 中获取 consumerGroup 的订阅关系（由 admin 创建消费者组的时候在对应 broker 中填充）
+        // 用远程配置中的 isConsumeMessageOrderly，RetryMaxTimes，GroupRetryPolicy 覆盖本地配置
+        // 剩下的订阅配置由本地 setting 配置决定，admin 创建的 SubscriptionGroupConfig 主要用来规定消费行为
+        // 具体订阅消费哪些数据是可变的，所以由客户端的 setting 决定，比如订阅那些 topic 都是随时可变的只能由消费者灵活制定
+        // admin 在创建消费者组的时候无法判定要订阅哪些 topic, 无法灵活改变，所以这部分订阅配置由消费者指定
         TelemetryCommand command = processClientSettings(ctx, request);
         if (grpcClientChannel != null) {
+            // 将 broker 端的订阅配置返回给客户端
             grpcClientChannel.writeTelemetryCommand(command);
         } else {
             responseObserver.onNext(command);
@@ -279,6 +290,10 @@ public class ClientActivity extends AbstractMessingActivity {
     protected TelemetryCommand processClientSettings(ProxyContext ctx, TelemetryCommand request) {
         String clientId = ctx.getClientID();
         grpcClientSettingsManager.updateClientSettings(ctx, clientId, request.getSettings());
+        // 用远程配置中的 isConsumeMessageOrderly，RetryMaxTimes，GroupRetryPolicy 覆盖本地配置
+        // 剩下的订阅配置由本地 setting 配置决定，admin 创建的 SubscriptionGroupConfig 主要用来规定消费行为
+        // 具体订阅消费哪些数据是可变的，所以由客户端的 setting 决定，比如订阅那些 topic 都是随时可变的只能由消费者灵活制定
+        // admin 在创建消费者组的时候无法判定要订阅哪些 topic, 无法灵活改变，所以这部分订阅配置由消费者指定
         Settings settings = grpcClientSettingsManager.getClientSettings(ctx);
         return TelemetryCommand.newBuilder()
             .setStatus(ResponseBuilder.getInstance().buildStatus(Code.OK, Code.OK.name()))

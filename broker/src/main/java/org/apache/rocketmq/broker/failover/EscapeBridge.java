@@ -225,9 +225,11 @@ public class EscapeBridge {
     public PutMessageResult putMessageToSpecificQueue(MessageExtBrokerInner messageExt) {
         BrokerController masterBroker = this.brokerController.peekMasterBroker();
         if (masterBroker != null) {
+            // 本机是 master
             return masterBroker.getMessageStore().putMessage(messageExt);
         }
         try {
+            // 本机是 slave 但必须开启 EnableSlaveActingMaster
             return asyncRemotePutMessageToSpecificQueue(messageExt).get(SEND_TIMEOUT, TimeUnit.MILLISECONDS);
         } catch (Exception e) {
             LOG.error("Put message to specific queue error", e);

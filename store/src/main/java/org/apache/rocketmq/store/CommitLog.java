@@ -1546,9 +1546,11 @@ public class CommitLog implements Swappable {
         int mappedFileSize = this.defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog();
         MappedFile mappedFile = this.mappedFileQueue.findMappedFileByOffset(offset, offset == 0);
         if (mappedFile != null) {
+            // 文件内偏移
             int pos = (int) (offset % mappedFileSize);
             SelectMappedBufferResult selectMappedBufferResult = mappedFile.selectMappedBuffer(pos, size);
             if (null != selectMappedBufferResult) {
+                // 查看 offset 所在内存页是否在 page cache 中
                 selectMappedBufferResult.setInCache(coldDataCheckService.isDataInPageCache(offset));
                 return selectMappedBufferResult;
             }
@@ -2630,15 +2632,18 @@ public class CommitLog implements Swappable {
         }
 
         public boolean isDataInPageCache(final long offset) {
+            // coldDataFlowControlEnable = false
             if (!defaultMessageStore.getMessageStoreConfig().isColdDataFlowControlEnable()) {
                 return true;
             }
             if (pageSize <= 0 || sampleSteps <= 0) {
                 return true;
             }
+            // 意思是 26% 的物理内存总量（commitlog 中的数据）可能会在内存中，剩下的可能在磁盘中
             if (!defaultMessageStore.checkInColdAreaByCommitOffset(offset, getMaxOffset())) {
                 return true;
             }
+            //  coldDataScanEnable = false
             if (!defaultMessageStore.getMessageStoreConfig().isColdDataScanEnable()) {
                 return false;
             }
@@ -2651,8 +2656,9 @@ public class CommitLog implements Swappable {
             if (null == bytes) {
                 return true;
             }
-
+            // 全局 offset 在 commitlog 文件中的局部位置
             int pos = (int) (offset % defaultMessageStore.getMessageStoreConfig().getMappedFileSizeCommitLog());
+            // 该位置属于第几个内存页
             int realIndex = pos / pageSize / sampleSteps;
             return bytes.length - 1 >= realIndex && bytes[realIndex] != 0;
         }

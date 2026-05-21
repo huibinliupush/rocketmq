@@ -117,6 +117,7 @@ public class RemotingCommand {
     private SerializeType serializeTypeCurrentRPC = serializeTypeConfigInThisServer;
     // requestBody(JSON序列化)
     private transient byte[] body;
+    // 由于没有拉取到消息，request 进入 long polling , 请求挂起
     private boolean suspended;
     // 编解码所需用时
     private transient Stopwatch processTimer;

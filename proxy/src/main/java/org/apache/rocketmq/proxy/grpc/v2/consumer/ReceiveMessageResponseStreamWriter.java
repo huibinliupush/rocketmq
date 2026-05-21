@@ -70,8 +70,10 @@ public class ReceiveMessageResponseStreamWriter {
                         Iterator<MessageExt> messageIterator = messageFoundList.iterator();
                         while (messageIterator.hasNext()) {
                             MessageExt curMessageExt = messageIterator.next();
+                            // MessageExt 转换为 gRPC Message
                             Message curMessage = convertToMessage(curMessageExt);
                             try {
+                                // 一条一条的发送消息，不是一次性发送
                                 streamObserver.onNext(ReceiveMessageResponse.newBuilder()
                                     .setMessage(curMessage)
                                     .build());

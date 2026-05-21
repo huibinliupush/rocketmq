@@ -109,16 +109,17 @@ public class ConsumerProcessor extends AbstractProcessor {
         String topic,
         int maxMsgNums,
         long invisibleTime,
-        long pollTime,
+        long pollTime, // LongPollingTimeout
         int initMode,
         SubscriptionData subscriptionData,
         boolean fifo,
-        PopMessageResultFilter popMessageResultFilter,
+        PopMessageResultFilter popMessageResultFilter, // PopMessageResultFilterImpl
         String attemptId,
         long timeoutMillis
     ) {
         CompletableFuture<PopResult> future = new CompletableFuture<>();
         try {
+            // 32
             if (maxMsgNums > ProxyUtils.MAX_MSG_NUMS_FOR_POP_REQUEST) {
                 log.warn("change maxNums from {} to {} for pop request, with info: topic:{}, group:{}",
                     maxMsgNums, ProxyUtils.MAX_MSG_NUMS_FOR_POP_REQUEST, topic, consumerGroup);
@@ -130,10 +131,11 @@ public class ConsumerProcessor extends AbstractProcessor {
             requestHeader.setTopic(topic);
             // queueId 为 -1 ， see : org.apache.rocketmq.proxy.service.route.MessageQueueSelector.buildBrokerActingQueues
             // broker 端对于 queueId = -1 的处理， see : PopMessageProcesser
+            // broker 端随机算去拉取 queue(不管 FIFO 还是其他类型消息)
             requestHeader.setQueueId(messageQueue.getQueueId());
             requestHeader.setMaxMsgNums(maxMsgNums);
             requestHeader.setInvisibleTime(invisibleTime);
-            requestHeader.setPollTime(pollTime);
+            requestHeader.setPollTime(pollTime);// LongPollingTimeout
             requestHeader.setInitMode(initMode);
             requestHeader.setExpType(subscriptionData.getExpressionType());
             requestHeader.setExp(subscriptionData.getSubString());
@@ -152,9 +154,12 @@ public class ConsumerProcessor extends AbstractProcessor {
                         popMessageResultFilter != null) {
 
                         List<MessageExt> messageExtList = new ArrayList<>();
+                        // 遍历从 broker pop 出来的所有消息
                         for (MessageExt messageExt : popResult.getMsgFoundList()) {
                             try {
+                                // UniqID： storehost + CommitLogOffset
                                 fillUniqIDIfNeed(messageExt);
+                                // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
                                 String handleString = createHandle(messageExt.getProperty(MessageConst.PROPERTY_POP_CK), messageExt.getCommitLogOffset());
                                 if (handleString == null) {
                                     log.error("[BUG] pop message from broker but handle is empty. requestHeader:{}, msg:{}", requestHeader, messageExt);
@@ -167,6 +172,7 @@ public class ConsumerProcessor extends AbstractProcessor {
                                     popMessageResultFilter.filterMessage(ctx, consumerGroup, subscriptionData, messageExt);
                                 switch (filterResult) {
                                     case NO_MATCH:
+                                        // 不会出现这种情况，broker 都已经过滤好了
                                         this.messagingProcessor.ackMessage(
                                             ctx,
                                             ReceiptHandle.decode(handleString),
@@ -176,10 +182,12 @@ public class ConsumerProcessor extends AbstractProcessor {
                                             MessagingProcessor.DEFAULT_TIMEOUT_MILLS);
                                         break;
                                     case TO_DLQ:
+                                        // 消费次数超过了 maxAttempts，发送到死信队列，然后 ack 消息
+                                        // 因为消息已经从原来的 topic 转移到 DLQTopic 了，所以要 ack 原来的 topic
                                         this.messagingProcessor.forwardMessageToDeadLetterQueue(
                                             ctx,
                                             ReceiptHandle.decode(handleString),
-                                            messageExt.getMsgId(),
+                                            messageExt.getMsgId(), // storehost + CommitLogOffset
                                             consumerGroup,
                                             topic,
                                             MessagingProcessor.DEFAULT_TIMEOUT_MILLS);
@@ -208,6 +216,7 @@ public class ConsumerProcessor extends AbstractProcessor {
         if (StringUtils.isBlank(MessageClientIDSetter.getUniqID(messageExt))) {
             if (messageExt instanceof MessageClientExt) {
                 MessageClientExt clientExt = (MessageClientExt) messageExt;
+                // storehost + CommitLogOffset
                 MessageAccessor.putProperty(messageExt, MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX, clientExt.getOffsetMsgId());
             }
         }
@@ -216,7 +225,7 @@ public class ConsumerProcessor extends AbstractProcessor {
     public CompletableFuture<AckResult> ackMessage(
         ProxyContext ctx,
         ReceiptHandle handle,
-        String messageId,
+        String messageId, // storehost + commitlogOffset
         String consumerGroup,
         String topic,
         long timeoutMillis
@@ -227,6 +236,8 @@ public class ConsumerProcessor extends AbstractProcessor {
 
             AckMessageRequestHeader ackMessageRequestHeader = new AckMessageRequestHeader();
             ackMessageRequestHeader.setConsumerGroup(consumerGroup);
+            // 如果 topic 是 normal 这里不变，如果是 retry topic ，那么就还原为 retry topic
+            // 通过 topicType 判断
             ackMessageRequestHeader.setTopic(handle.getRealTopic(topic, consumerGroup));
             ackMessageRequestHeader.setQueueId(handle.getQueueId());
             ackMessageRequestHeader.setExtraInfo(handle.getReceiptHandle());
@@ -316,9 +327,12 @@ public class ConsumerProcessor extends AbstractProcessor {
 
             ChangeInvisibleTimeRequestHeader changeInvisibleTimeRequestHeader = new ChangeInvisibleTimeRequestHeader();
             changeInvisibleTimeRequestHeader.setConsumerGroup(groupName);
+            // 通过 topicType 还原真实的 topic , 比如 topic 原来就是 normal 这里保持不变
+            // 但原来是 retry topic 这里就需要从 normal topic 还原为 retry topic(发送给消费者的永远是 normal topic 这里需要还原一下真实的 topic)
             changeInvisibleTimeRequestHeader.setTopic(handle.getRealTopic(topicName, groupName));
             changeInvisibleTimeRequestHeader.setQueueId(handle.getQueueId());
             changeInvisibleTimeRequestHeader.setExtraInfo(handle.getReceiptHandle());
+            // msgQueueOffset
             changeInvisibleTimeRequestHeader.setOffset(handle.getOffset());
             changeInvisibleTimeRequestHeader.setInvisibleTime(invisibleTime);
             long commitLogOffset = handle.getCommitLogOffset();

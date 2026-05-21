@@ -35,6 +35,8 @@ import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 public class ConsumerOrderInfoLockManager {
     private static final Logger POP_LOGGER = LoggerFactory.getLogger(LoggerName.ROCKETMQ_POP_LOGGER_NAME);
     private final BrokerController brokerController;
+    // key： topic, group, queueId
+    // 队列中第一个还没 ack 的消息对应的 invisibleTime 定时任务，当 invisibleTime 到达通知 popRequest 重新拉取
     private final Map<Key, Timeout> timeoutMap = new ConcurrentHashMap<>();
     private final Timer timer;
     private static final int TIMER_TICK_MS = 100;
@@ -77,6 +79,7 @@ public class ConsumerOrderInfoLockManager {
     }
 
     public void updateLockFreeTimestamp(String topic, String group, int queueId, Long lockFreeTimestamp) {
+        // true
         if (!this.brokerController.getBrokerConfig().isEnableNotifyAfterPopOrderLockRelease()) {
             return;
         }
@@ -86,7 +89,9 @@ public class ConsumerOrderInfoLockManager {
         try {
             this.timeoutMap.compute(new Key(topic, group, queueId), (key, oldTimeout) -> {
                 try {
+                    // 第一个未 ack 消息的 invisibleTime
                     long delay = lockFreeTimestamp - System.currentTimeMillis();
+                    // 第一个未 ack 消息 invisibleTime 以到，消息重新可见，通知重新拉取
                     Timeout newTimeout = this.timer.newTimeout(new NotifyLockFreeTimerTask(key), delay, TimeUnit.MILLISECONDS);
                     if (oldTimeout != null) {
                         // cancel prev timerTask
@@ -126,6 +131,7 @@ public class ConsumerOrderInfoLockManager {
         private final Key key;
 
         private NotifyLockFreeTimerTask(Key key) {
+            // topic, group, queueId
             this.key = key;
         }
 
@@ -134,6 +140,7 @@ public class ConsumerOrderInfoLockManager {
             if (timeout.isCancelled() || !brokerController.getBrokerConfig().isEnableNotifyAfterPopOrderLockRelease()) {
                 return;
             }
+            // invisibleTime 以到，消息重新可见，通知重新拉取
             notifyLockIsFree(key);
             timeoutMap.computeIfPresent(key, (key1, curTimeout) -> {
                 if (curTimeout == timeout) {

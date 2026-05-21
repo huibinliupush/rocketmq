@@ -55,7 +55,7 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
 
     private final TopicRouteService topicRouteService;
     private final MQClientAPIFactory mqClientAPIFactory;
-
+    // 3 线程 100000 队列
     protected final ThreadPoolExecutor cacheRefreshExecutor;
 
     protected final LoadingCache<String, TopicConfigAndQueueMapping> topicConfigCache;
@@ -81,22 +81,23 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
 
         ProxyConfig config = ConfigurationManager.getProxyConfig();
         this.cacheRefreshExecutor = ThreadPoolMonitor.createAndMonitor(
-            config.getMetadataThreadPoolNums(),
+            config.getMetadataThreadPoolNums(), // 3
             config.getMetadataThreadPoolNums(),
             1000 * 60,
             TimeUnit.MILLISECONDS,
             "MetadataCacheRefresh",
-            config.getMetadataThreadPoolQueueCapacity()
+            config.getMetadataThreadPoolQueueCapacity() // 100000
         );
         this.topicConfigCache = CacheBuilder.newBuilder()
             .maximumSize(config.getTopicConfigCacheMaxNum())
             .expireAfterAccess(config.getTopicConfigCacheExpiredSeconds(), TimeUnit.SECONDS)
             .refreshAfterWrite(config.getTopicConfigCacheRefreshSeconds(), TimeUnit.SECONDS)
             .build(new ClusterTopicConfigCacheLoader());
+        // 缓存 consumerGroup 在 broker 端的订阅关系配置（由 admin 创建消费者组的时候再 broker 填充）
         this.subscriptionGroupConfigCache = CacheBuilder.newBuilder()
-            .maximumSize(config.getSubscriptionGroupConfigCacheMaxNum())
-            .expireAfterAccess(config.getSubscriptionGroupConfigCacheExpiredSeconds(), TimeUnit.SECONDS)
-            .refreshAfterWrite(config.getSubscriptionGroupConfigCacheRefreshSeconds(), TimeUnit.SECONDS)
+            .maximumSize(config.getSubscriptionGroupConfigCacheMaxNum())// 20000
+            .expireAfterAccess(config.getSubscriptionGroupConfigCacheExpiredSeconds(), TimeUnit.SECONDS)// 300
+            .refreshAfterWrite(config.getSubscriptionGroupConfigCacheRefreshSeconds(), TimeUnit.SECONDS) // 20
             .build(new ClusterSubscriptionGroupConfigCacheLoader());
         this.userCache = CacheBuilder.newBuilder()
             .maximumSize(config.getUserCacheMaxNum())
@@ -134,6 +135,10 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
     public SubscriptionGroupConfig getSubscriptionGroupConfig(ProxyContext ctx, String group) {
         SubscriptionGroupConfig config;
         try {
+            // 随机获取集群（brokerClusterName）中的一个副本集，获取副本集中 master broker
+            // 向 master broker 获取 consumerGroup 的订阅关系配置（由 admin 命令创建填充）
+            // broker 启动的时候会在创建 topicConfigManger 的时候初始化系统级 topic 包括 brokerClusterName
+            // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
             config = this.subscriptionGroupConfigCache.get(group);
         } catch (Exception e) {
             return null;
@@ -177,16 +182,26 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
     protected class ClusterSubscriptionGroupConfigCacheLoader extends AbstractCacheLoader<String, SubscriptionGroupConfig> {
 
         public ClusterSubscriptionGroupConfigCacheLoader() {
+            // 3 线程 100000 队列
             super(cacheRefreshExecutor);
         }
-
+        // 随机获取集群（brokerClusterName）中的一个副本集，获取副本集中 master broker
+        // 向 master broker 获取 consumerGroup 的订阅关系配置（由 admin 命令创建填充）
+        // broker 启动的时候会在创建 topicConfigManger 的时候初始化系统级 topic 包括 brokerClusterName
+        // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
         @Override
         protected SubscriptionGroupConfig getDirectly(String consumerGroup) throws Exception {
             ProxyConfig config = ConfigurationManager.getProxyConfig();
             String clusterName = config.getRocketMQClusterName();
+            // 随机获取集群（clusterName）中的一个副本集，获取副本集中 master broker
+            // 向 master broker 获取 consumerGroup 的订阅关系配置（由 admin 命令创建填充）
+            // broker 启动的时候会在创建 topicConfigManger 的时候初始化系统级 topic 包括 brokerClusterName
+            // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
             Optional<BrokerData> brokerDataOptional = findOneBroker(clusterName);
             if (brokerDataOptional.isPresent()) {
+                // 获取副本集中 master broker
                 String brokerAddress = brokerDataOptional.get().selectBrokerAddr();
+                // 向 master broker 获取 consumerGroup 的订阅关系配置（由 admin 命令创建填充）
                 return mqClientAPIFactory.getClient().getSubscriptionGroupConfig(brokerAddress, consumerGroup, DEFAULT_TIMEOUT);
             }
             return EMPTY_SUBSCRIPTION_GROUP_CONFIG;
@@ -275,9 +290,12 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
             log.error("load user failed. username:{}", key, e);
         }
     }
-
+    // 随机获取一个 topic 所在的副本集
     protected Optional<BrokerData> findOneBroker(String topic) throws Exception {
         try {
+            // 如果 topic 指定的是 clusterName，那么就随机获取集群（clusterName）中的一个副本集，获取副本集中 master broker
+            // broker 启动的时候会在创建 topicConfigManger 的时候初始化系统级 topic 包括 brokerClusterName
+            // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
             List<BrokerData> brokerDatas = topicRouteService.getAllMessageQueueView(ProxyContext.createForInner(this.getClass()), topic).getTopicRouteData().getBrokerDatas();
             int skipNum = random.nextInt(brokerDatas.size());
             return brokerDatas.stream().skip(skipNum).findFirst();

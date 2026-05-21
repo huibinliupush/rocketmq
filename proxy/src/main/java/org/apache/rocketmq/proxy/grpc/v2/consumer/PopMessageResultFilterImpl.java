@@ -33,9 +33,11 @@ public class PopMessageResultFilterImpl implements PopMessageResultFilter {
     @Override
     public FilterResult filterMessage(ProxyContext ctx, String consumerGroup, SubscriptionData subscriptionData,
         MessageExt messageExt) {
+        // 这个 broker 已经过滤了
         if (!FilterUtils.isTagMatched(subscriptionData.getTagsSet(), messageExt.getTags())) {
             return FilterResult.NO_MATCH;
         }
+        // 消费次数超过了 maxAttempts，发送到死信队列
         if (messageExt.getReconsumeTimes() >= maxAttempts) {
             return FilterResult.TO_DLQ;
         }

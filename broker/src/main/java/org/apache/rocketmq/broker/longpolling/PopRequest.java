@@ -33,6 +33,7 @@ public class PopRequest {
     private final AtomicBoolean complete = new AtomicBoolean(false);
     private final long op = COUNTER.getAndIncrement();
     // requestHeader.getBornTime() + requestHeader.getPollTime()
+    // timeout 时间戳
     private final long expired;
     private final SubscriptionData subscriptionData;
     private final MessageFilter messageFilter;
@@ -91,7 +92,8 @@ public class PopRequest {
         sb.append('}');
         return sb.toString();
     }
-
+    // 1. 过期时间越近的排在最前面
+    // 2. op(全局计数COUNTER) 越小排在最前面
     public static final Comparator<PopRequest> COMPARATOR = (o1, o2) -> {
         int ret = (int) (o1.getExpired() - o2.getExpired());
 

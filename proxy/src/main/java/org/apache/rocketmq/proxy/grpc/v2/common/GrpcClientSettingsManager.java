@@ -54,6 +54,7 @@ import org.apache.rocketmq.remoting.protocol.subscription.SubscriptionGroupConfi
 public class GrpcClientSettingsManager extends ServiceThread implements StartAndShutdown {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
     // 由 org.apache.rocketmq.proxy.grpc.v2.GrpcMessagingApplication.telemetry 填充 ClientSetting
+    // key : clientId
     protected static final Map<String, Settings> CLIENT_SETTINGS_MAP = new ConcurrentHashMap<>();
 
     private final MessagingProcessor messagingProcessor;
@@ -76,6 +77,10 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
         if (settings.hasPublishing()) {
             settings = mergeProducerData(settings);
         } else if (settings.hasSubscription()) {
+            // 用远程配置中的 isConsumeMessageOrderly，RetryMaxTimes，GroupRetryPolicy 覆盖本地配置
+            // 剩下的订阅配置由本地 setting 配置决定，admin 创建的 SubscriptionGroupConfig 主要用来规定消费行为
+            // 具体订阅消费哪些数据是可变的，所以由客户端的 setting 决定，比如订阅那些 topic 都是随时可变的只能由消费者灵活制定
+            // admin 在创建消费者组的时候无法判定要订阅哪些 topic, 无法灵活改变，所以这部分订阅配置由消费者指定
             settings = mergeSubscriptionData(ctx, settings, settings.getSubscription().getGroup().getName());
         }
         return mergeMetric(settings);
@@ -98,13 +103,20 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
             .setMaxBodySize(config.getMaxMessageSize());
         return builder.build();
     }
-
+    // 用远程配置中的 isConsumeMessageOrderly，RetryMaxTimes，GroupRetryPolicy 覆盖本地配置
+    // 剩下的订阅配置由本地 setting 配置决定，admin 创建的 SubscriptionGroupConfig 主要用来规定消费行为
+    // 具体订阅消费哪些数据是可变的，所以由客户端的 setting 决定，比如订阅那些 topic 都是随时可变的只能由消费者灵活制定
+    // admin 在创建消费者组的时候无法判定要订阅哪些 topic, 无法灵活改变，所以这部分订阅配置由消费者指定
     protected Settings mergeSubscriptionData(ProxyContext ctx, Settings settings, String consumerGroup) {
+        // 随机获取集群（brokerClusterName）中的一个副本集，获取副本集中 master broker
+        // 向 master broker 获取 consumerGroup 的订阅关系配置（由 admin 命令创建填充）
+        // broker 启动的时候会在创建 topicConfigManger 的时候初始化系统级 topic 包括 brokerClusterName
+        // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
         SubscriptionGroupConfig config = this.messagingProcessor.getSubscriptionGroupConfig(ctx, consumerGroup);
         if (config == null) {
             return settings;
         }
-
+        // broker 端存储的 consumerGroup 订阅关系与本地配置合并
         return mergeSubscriptionData(settings, config);
     }
 
@@ -136,17 +148,22 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
         Metric metric = metricBuilder.build();
         return settings.toBuilder().setMetric(metric).build();
     }
-
+    // Settings 要返回给客户端的相关配置类
+    // SubscriptionGroupConfig 远程 broker 端的配置（由 admin 创建 consumerGroup 的时候在 broker 填充）
+    // 用远程配置中的 isConsumeMessageOrderly，RetryMaxTimes，GroupRetryPolicy 覆盖本地配置
+    // 剩下的订阅配置由本地 setting 配置决定，admin 创建的 SubscriptionGroupConfig 主要用来规定消费行为
+    // 具体订阅消费哪些数据是可变的，所以由客户端的 setting 决定，比如订阅那些 topic 都是随时可变的只能由消费者灵活制定
+    // admin 在创建消费者组的时候无法判定要订阅哪些 topic, 无法灵活改变，所以这部分订阅配置由消费者指定
     protected static Settings mergeSubscriptionData(Settings settings, SubscriptionGroupConfig groupConfig) {
         Settings.Builder resultSettingsBuilder = settings.toBuilder();
         ProxyConfig config = ConfigurationManager.getProxyConfig();
 
         resultSettingsBuilder.getSubscriptionBuilder()
-            .setReceiveBatchSize(config.getGrpcClientConsumerLongPollingBatchSize())
-            .setLongPollingTimeout(Durations.fromMillis(config.getGrpcClientConsumerMaxLongPollingTimeoutMillis()))
-            .setFifo(groupConfig.isConsumeMessageOrderly());
+            .setReceiveBatchSize(config.getGrpcClientConsumerLongPollingBatchSize()) // 32
+            .setLongPollingTimeout(Durations.fromMillis(config.getGrpcClientConsumerMaxLongPollingTimeoutMillis())) // 20s
+            .setFifo(groupConfig.isConsumeMessageOrderly());// 默认 false
 
-        resultSettingsBuilder.getBackoffPolicyBuilder().setMaxAttempts(groupConfig.getRetryMaxTimes() + 1);
+        resultSettingsBuilder.getBackoffPolicyBuilder().setMaxAttempts(groupConfig.getRetryMaxTimes() + 1); // 16+1
 
         GroupRetryPolicy groupRetryPolicy = groupConfig.getGroupRetryPolicy();
         if (groupRetryPolicy.getType().equals(GroupRetryPolicyType.EXPONENTIAL)) {
@@ -184,12 +201,17 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
 
     public void updateClientSettings(ProxyContext ctx, String clientId, Settings settings) {
         if (settings.hasSubscription()) {
+            // createDefaultConsumerSettingsBuilder 获取订阅关系的默认配置
+            // SubscriptionGroupConfig 是由 admin 创建消费者组的时候填充到 broker 的
+            // 默认 settings 与客户端发送过来的 settings 进行合并
             settings = createDefaultConsumerSettingsBuilder().mergeFrom(settings).build();
         }
         CLIENT_SETTINGS_MAP.put(clientId, settings);
     }
 
     protected Settings.Builder createDefaultConsumerSettingsBuilder() {
+        // 获取订阅关系的默认配置
+        // SubscriptionGroupConfig 是由 admin 创建消费者组的时候填充到 broker 的
         return mergeSubscriptionData(Settings.newBuilder().getDefaultInstanceForType(), new SubscriptionGroupConfig())
             .toBuilder();
     }

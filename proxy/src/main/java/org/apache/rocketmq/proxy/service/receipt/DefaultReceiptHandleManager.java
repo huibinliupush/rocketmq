@@ -64,6 +64,10 @@ public class DefaultReceiptHandleManager extends AbstractStartAndShutdown implem
     protected final static Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
     protected final MetadataService metadataService;
     protected final ConsumerManager consumerManager;
+    // key: channel@consumerGroup
+    // ReceiptHandleGroup : msgID -> messageReceiptHandle
+    // 当消息 ack 之后，将 msgID -> messageReceiptHandle 从 ReceiptHandleGroup 中删除
+    // changeInvisibleTime 的时候也会将原有消息的  messageReceiptHandle 删除
     protected final ConcurrentMap<ReceiptHandleGroupKey, ReceiptHandleGroup> receiptHandleGroupMap;
     protected final StateEventListener<RenewEvent> eventListener;
     protected final static RetryPolicy RENEW_POLICY = new RenewStrategyPolicy();

@@ -143,6 +143,7 @@ public class BrokerStatsManager {
     private final HashMap<String, StatsItemSet> statsTable = new HashMap<>();
     private final String clusterName;
     private final boolean enableQueueStat;
+    // 记录 queueId@topic@group 还有多少消息(size不是个数)没有被拉取
     private MomentStatsItemSet momentStatsItemSetFallSize;
     // fallBehind : 当前时间与最近拉取消息的 storetime 之间的差值
     // see : org.apache.rocketmq.broker.processor.PopMessageProcessor.readGetMessageResult
@@ -615,6 +616,8 @@ public class BrokerStatsManager {
     public void recordDiskFallBehindSize(final String group, final String topic, final int queueId,
         final long fallBehind) {
         final String statsKey = buildStatsKey(queueId, topic, group);
+        // 记录 queueId 中还有多少消息没有被 consumerGroup 拉取
+        // queueId@topic@group 还有多少消息(size不是个数)没有被拉取
         this.momentStatsItemSetFallSize.setValue(statsKey, fallBehind);
     }
 

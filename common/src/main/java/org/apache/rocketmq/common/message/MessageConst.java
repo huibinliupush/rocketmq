@@ -26,6 +26,7 @@ public class MessageConst {
     // 延时时间所处的 level see: org.apache.rocketmq.proxy.config.ProxyConfig.computeDelayLevel
     // 延时消息只能按照 delayLevel 来固定延时时间，不能随意指定延时时间
     public static final String PROPERTY_DELAY_TIME_LEVEL = "DELAY";
+    // msgExt.getTopic , commitlog 中存储的真正 topic
     public static final String PROPERTY_RETRY_TOPIC = "RETRY_TOPIC";
     public static final String PROPERTY_REAL_TOPIC = "REAL_TOPIC";
     public static final String PROPERTY_REAL_QUEUE_ID = "REAL_QID";
@@ -35,6 +36,7 @@ public class MessageConst {
     public static final String PROPERTY_MIN_OFFSET = "MIN_OFFSET";
     public static final String PROPERTY_MAX_OFFSET = "MAX_OFFSET";
     public static final String PROPERTY_BUYER_ID = "BUYER_ID";
+    // storehost + CommitLogOffset
     public static final String PROPERTY_ORIGIN_MESSAGE_ID = "ORIGIN_MESSAGE_ID";
     public static final String PROPERTY_TRANSFER_FLAG = "TRANSFER_FLAG";
     public static final String PROPERTY_CORRECTION_FLAG = "CORRECTION_FLAG";
@@ -49,6 +51,10 @@ public class MessageConst {
     // BrokerConfig().isTraceOn()
     public static final String PROPERTY_TRACE_SWITCH = "TRACE_ON";
     // messageId :  ip,pid,MessageClientIDSetter-hashcode,当前时间与月初1号的时间差值（毫秒）,COUNTER
+    // storehost + CommitLogOffset 客户端拉取到消息会重新改写 UNIQ_KEY
+    // 方便通过 messageId 找到其所在的 broker 以及 CommitLogOffset
+    // ack message 的时候向 reviveTopic 发送消息，这时指定的是
+    // org.apache.rocketmq.broker.processor.PopMessageProcessor.genAckUniqueId
     public static final String PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX = "UNIQ_KEY";
     public static final String PROPERTY_EXTEND_UNIQ_INFO = "EXTEND_UNIQ_INFO";
     public static final String PROPERTY_MAX_RECONSUME_TIMES = "MAX_RECONSUME_TIMES";
@@ -68,8 +74,13 @@ public class MessageConst {
     public static final String PROPERTY_PUSH_REPLY_TIME = "PUSH_REPLY_TIME";
     public static final String PROPERTY_CLUSTER = "CLUSTER";
     public static final String PROPERTY_MESSAGE_TYPE = "MSG_TYPE";
+    // retry topic 中的消息需要添加这个属性
+    // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset
+    // 消息拉取到客户端后，会重写： startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
+    // 在原有基础上添加 CommitLogOffset
     public static final String PROPERTY_POP_CK = "POP_CK";
     public static final String PROPERTY_POP_CK_OFFSET = "POP_CK_OFFSET";
+    // 消息第一次被 pop 出来的时间，不论后续消费被 revive 多少次，这里始终不变
     public static final String PROPERTY_FIRST_POP_TIME = "1ST_POP_TIME";
     // messageGroup ，messageGroup 长度不能超过 64 字节
     public static final String PROPERTY_SHARDING_KEY = "__SHARDINGKEY";
@@ -78,6 +89,7 @@ public class MessageConst {
     public static final String PROPERTY_INNER_MULTI_DISPATCH = "INNER_MULTI_DISPATCH";
     public static final String PROPERTY_INNER_MULTI_QUEUE_OFFSET = "INNER_MULTI_QUEUE_OFFSET";
     public static final String PROPERTY_TRACE_CONTEXT = "TRACE_CONTEXT";
+    // 时间轮调度延时消息
     public static final String PROPERTY_TIMER_DELAY_SEC = "TIMER_DELAY_SEC";
     // DeliveryTimestamp 任意延时时间的支持
     public static final String PROPERTY_TIMER_DELIVER_MS = "TIMER_DELIVER_MS";
@@ -106,9 +118,12 @@ public class MessageConst {
     public static final String PROPERTY_TIMER_ENQUEUE_MS = "TIMER_ENQUEUE_MS";
     public static final String PROPERTY_TIMER_DEQUEUE_MS = "TIMER_DEQUEUE_MS";
     public static final String PROPERTY_TIMER_ROLL_TIMES = "TIMER_ROLL_TIMES";
+    // 延时消息投递时间戳
     public static final String PROPERTY_TIMER_OUT_MS = "TIMER_OUT_MS";
     public static final String PROPERTY_TIMER_DEL_UNIQKEY = "TIMER_DEL_UNIQKEY";
+    // 传统 DelayLevel 调度延时消息
     public static final String PROPERTY_TIMER_DELAY_LEVEL = "TIMER_DELAY_LEVEL";
+    // 时间轮调度延时消息
     public static final String PROPERTY_TIMER_DELAY_MS = "TIMER_DELAY_MS";
     public static final String PROPERTY_CRC32 = "__CRC32#";
 

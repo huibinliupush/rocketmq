@@ -24,10 +24,12 @@ public class PopAckConstants {
 
     public static long lockTime = 5000;
     public static int retryQueueNum = 1;
-
+    // CID_RMQ_SYS_REVIVE_GROUP
     public static final String REVIVE_GROUP = MixAll.CID_RMQ_SYS_PREFIX + "REVIVE_GROUP";
     public static final String LOCAL_HOST = "127.0.0.1";
+    // rmq_sys_REVIVE_LOG_
     public static final String REVIVE_TOPIC = TopicValidator.SYSTEM_TOPIC_PREFIX + "REVIVE_LOG_";
+    // check point
     public static final String CK_TAG = "ck";
     public static final String ACK_TAG = "ack";
     public static final String BATCH_ACK_TAG = "bAck";
@@ -40,6 +42,7 @@ public class PopAckConstants {
      * @return revive topic
      */
     public static String buildClusterReviveTopic(String clusterName) {
+        // DEFAULT_CLUSTER_NAME rmq_sys_REVIVE_LOG_
         return PopAckConstants.REVIVE_TOPIC + clusterName;
     }
 

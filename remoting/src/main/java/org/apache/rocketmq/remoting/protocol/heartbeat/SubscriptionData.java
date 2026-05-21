@@ -30,7 +30,7 @@ public class SubscriptionData implements Comparable<SubscriptionData> {
     private boolean classFilterMode = false;
     private String topic;
     private String subString;
-    // 订阅的 tag 集合
+    // 订阅的 tag 集合, 如果 ExpressionType.TAG 那么就在构建的时候从 subString 中提取 tags
     private Set<String> tagsSet = new HashSet<>();
     // 订阅的 tag hashcode 集合
     private Set<Integer> codeSet = new HashSet<>();

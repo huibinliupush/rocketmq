@@ -24,8 +24,10 @@ public class KeyBuilder {
 
     public static String buildPopRetryTopic(String topic, String cid, boolean enableRetryV2) {
         if (enableRetryV2) {
+            // %RETRY%consumerGroup+topic
             return buildPopRetryTopicV2(topic, cid);
         }
+        // %RETRY%consumerGroup_topic
         return buildPopRetryTopicV1(topic, cid);
     }
 
@@ -38,6 +40,7 @@ public class KeyBuilder {
     }
 
     public static String buildPopRetryTopicV1(String topic, String cid) {
+        // %RETRY%consumerGroup_topic
         return MixAll.RETRY_GROUP_TOPIC_PREFIX + cid + POP_RETRY_SEPARATOR_V1 + topic;
     }
 

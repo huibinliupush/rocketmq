@@ -34,6 +34,7 @@ public class ManyMessageTransfer extends AbstractReferenceCounted implements Fil
     private long transferred;
 
     public ManyMessageTransfer(ByteBuffer byteBufferHeader, GetMessageResult getMessageResult) {
+        // responseHeader
         this.byteBufferHeader = byteBufferHeader;
         this.getMessageResult = getMessageResult;
     }
@@ -66,9 +67,11 @@ public class ManyMessageTransfer extends AbstractReferenceCounted implements Fil
     @Override
     public long transferTo(WritableByteChannel target, long position) throws IOException {
         if (this.byteBufferHeader.hasRemaining()) {
+            // 先发送 header
             transferred += target.write(this.byteBufferHeader);
             return transferred;
         } else {
+            // 在发送 body
             List<ByteBuffer> messageBufferList = this.getMessageResult.getMessageBufferList();
             for (ByteBuffer bb : messageBufferList) {
                 if (bb.hasRemaining()) {

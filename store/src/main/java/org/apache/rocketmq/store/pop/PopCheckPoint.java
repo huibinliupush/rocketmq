@@ -21,28 +21,38 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class PopCheckPoint implements Comparable<PopCheckPoint> {
+    // 本次消息拉取的起始 offset（消息在 consume queue 中的全局 index）
     @JSONField(name = "so")
     private long startOffset;
     @JSONField(name = "pt")
     private long popTime;
     @JSONField(name = "it")
     private long invisibleTime;
+    // 用于记录 inflight pop message 的 ack 情况
     @JSONField(name = "bm")
     private int bitMap;
+    // 本次拉取消息的个数
     @JSONField(name = "n")
     private byte num;
     @JSONField(name = "q")
     private int queueId;
     @JSONField(name = "t")
     private String topic;
+    // 拉取消息的 ConsumerGroup
     @JSONField(name = "c")
     private String cid;
+    // check point 写入 reviveTopic 中的 reviveQueue 中的 offset
+    // 当 popTime + invisibleTime 达到时，由 PopReviveService 消费时填充
     @JSONField(name = "ro")
     private long reviveOffset;
+    // 存储本批次 pop message 的 queueOffset
+    // 这里存储的只是真正 queueOffset 与 startOffset 的差值，可以用 int 表示节省内存
     @JSONField(name = "d")
     private List<Integer> queueOffsetDiff;
     @JSONField(name = "bn")
     String brokerName;
+    // 如果一个消息复活失败（invisiable time 到了，但是写入 retry topic 失败）
+    // rePutTimes + 1， 重新投入到 revive topic 中
     @JSONField(name = "rp")
     String rePutTimes; // ck rePut times
 

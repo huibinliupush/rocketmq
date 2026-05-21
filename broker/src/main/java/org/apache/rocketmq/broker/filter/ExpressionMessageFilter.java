@@ -42,16 +42,19 @@ public class ExpressionMessageFilter implements MessageFilter {
     public ExpressionMessageFilter(SubscriptionData subscriptionData, ConsumerFilterData consumerFilterData,
         ConsumerFilterManager consumerFilterManager) {
         this.subscriptionData = subscriptionData;
+        // SQL92 才会构建表达式，TAG 这里为 null
         this.consumerFilterData = consumerFilterData;
         this.consumerFilterManager = consumerFilterManager;
         if (consumerFilterData == null) {
+            // TAG
             bloomDataValid = false;
             return;
         }
         BloomFilter bloomFilter = this.consumerFilterManager.getBloomFilter();
-        if (bloomFilter != null && bloomFilter.isValid(consumerFilterData.getBloomFilterData())) {
+        if (bloomFilter != null && bloomFilter.isValid(consumerFilterData.getBloomFilterData())) { // null
             bloomDataValid = true;
         } else {
+            // SQL92 也是 false , 因为 BloomFilterData 是 null , 只有 expression
             bloomDataValid = false;
         }
     }
@@ -137,13 +140,15 @@ public class ExpressionMessageFilter implements MessageFilter {
         }
 
         if (tempProperties == null && msgBuffer != null) {
+            // 从消息中读取 properties ，并解码成 map
             tempProperties = MessageDecoder.decodeProperties(msgBuffer);
         }
 
         Object ret = null;
         try {
             MessageEvaluationContext context = new MessageEvaluationContext(tempProperties);
-
+            // 消息 properties 中的属性是否和消费者指定的 FilterExpression 指定的表达式匹配
+            // SQL92 : SqlFilter complie 出来的 Expression
             ret = realFilterData.getCompiledExpression().evaluate(context);
         } catch (Throwable e) {
             log.error("Message Filter error, " + realFilterData + ", " + tempProperties, e);

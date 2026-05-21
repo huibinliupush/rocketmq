@@ -129,6 +129,7 @@ public class PopInflightMessageCounter {
     }
 
     public long getGroupPopInFlightMessageNum(String topic, String group, int queueId) {
+        // topic@consumerGroup@queueId 对应的 PopInFlightMessageNum
         Map<Integer /* queueId */, AtomicLong> queueCounter = topicInFlightMessageNum.get(buildKey(topic, group));
         if (queueCounter == null) {
             return 0;

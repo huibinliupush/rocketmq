@@ -40,11 +40,13 @@ public class TimerLog {
             + 8; //reserved value, just in case of
     public final static int UNIT_PRE_SIZE_FOR_MSG = 28;
     public final static int UNIT_PRE_SIZE_FOR_METRIC = 40;
+    // user.home/stpre/commitlog/timerlog
     private final MappedFileQueue mappedFileQueue;
-
+    // 100M
     private final int fileSize;
 
     public TimerLog(final String storePath, final int fileSize) {
+        // 100M
         this.fileSize = fileSize;
         this.mappedFileQueue = new MappedFileQueue(storePath, fileSize, null);
     }

@@ -61,6 +61,7 @@ public class MappedFileQueue implements Swappable {
         AllocateMappedFileService allocateMappedFileService) {
         // user.home/stpre/commitlog
         // user.home/store/consumequeue/topic/queueId
+        // user.home/stpre/commitlog/timerlog
         this.storePath = storePath;
         this.mappedFileSize = mappedFileSize;
         // consume queue 这里为 null 因为是后台 reput 线程构建所以不需要异步创建，不用考虑文件的创建对实时性的影响

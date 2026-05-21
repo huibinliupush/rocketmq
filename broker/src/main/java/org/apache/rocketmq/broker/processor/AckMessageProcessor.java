@@ -56,16 +56,22 @@ public class AckMessageProcessor implements NettyRequestProcessor {
 
     private static final Logger POP_LOGGER = LoggerFactory.getLogger(LoggerName.ROCKETMQ_POP_LOGGER_NAME);
     private final BrokerController brokerController;
-    private final String reviveTopic;
+    // DEFAULT_CLUSTER_NAME rmq_sys_REVIVE_LOG_
+    private final String reviveTopic; // 系统 topic 在 TopicConfigManger init 方法中初始化
+    // 负责消费 reviveTopic , 每一个 ReviveQueue 对应一个 PopReviveService
+    // 但只有 master 节点上才会 run PopReviveService
     private final PopReviveService[] popReviveServices;
 
     public AckMessageProcessor(final BrokerController brokerController) {
         this.brokerController = brokerController;
         this.reviveTopic = PopAckConstants.buildClusterReviveTopic(
             this.brokerController.getBrokerConfig().getBrokerClusterName());
+        // 负责消费 reviveTopic
         this.popReviveServices = new PopReviveService[this.brokerController.getBrokerConfig().getReviveQueueNum()];
         for (int i = 0; i < this.brokerController.getBrokerConfig().getReviveQueueNum(); i++) {
+            // 每一个 ReviveQueue 对应一个 PopReviveService
             this.popReviveServices[i] = new PopReviveService(brokerController, reviveTopic, i);
+            // 只有 master 节点上才会 run PopReviveService
             this.popReviveServices[i].setShouldRunPopRevive(brokerController.getBrokerConfig().getBrokerId() == 0);
         }
     }
@@ -119,9 +125,12 @@ public class AckMessageProcessor implements NettyRequestProcessor {
         BatchAckMessageRequestBody reqBody = null;
         final RemotingCommand response = RemotingCommand.createResponseCommand(ResponseCode.SUCCESS, null);
         response.setOpaque(request.getOpaque());
+        // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG， ack 之后的消息就不会复活了
+        // 但是这里 ack 消息并不会推进原来 topic 对应 queue 的 commitOffset
         if (request.getCode() == RequestCode.ACK_MESSAGE) {
             requestHeader = (AckMessageRequestHeader) request.decodeCommandCustomHeader(AckMessageRequestHeader.class);
-
+            // 这里的 topic 就是真正的 topic , normal or retry topic
+            // 在 ack 的时候都会还原为真正的 topic(通过 reviveHandler 中的 topic type)
             TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
             if (null == topicConfig) {
                 POP_LOGGER.error("The topic {} not exist, consumer: {} ", requestHeader.getTopic(), RemotingHelper.parseChannelRemoteAddr(channel));
@@ -138,10 +147,11 @@ public class AckMessageProcessor implements NettyRequestProcessor {
                 response.setRemark(errorInfo);
                 return response;
             }
-
+            // 消息所在队列的 minOffset
             long minOffset = this.brokerController.getMessageStore().getMinOffsetInQueue(requestHeader.getTopic(), requestHeader.getQueueId());
             long maxOffset;
             try {
+                // 消息所在队列的 maxOffset
                 maxOffset = this.brokerController.getMessageStore().getMaxOffsetInQueue(requestHeader.getTopic(), requestHeader.getQueueId());
             } catch (ConsumeQueueException e) {
                 throw new RemotingCommandException("Failed to get max offset", e);
@@ -155,8 +165,12 @@ public class AckMessageProcessor implements NettyRequestProcessor {
                 return response;
             }
             if (brokerController.getBrokerConfig().isPopConsumerKVServiceEnable()) {
+                // RocksDB 版
                 appendAckNew(requestHeader, null, response, channel, null);
             } else {
+                // ConsumeQueue 版
+                // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG， ack 之后的消息就不会复活了
+                // 但是这里 ack 消息并不会推进原来 topic 对应 queue 的 commitOffset
                 appendAck(requestHeader, null, response, channel, null);
             }
         } else if (request.getCode() == RequestCode.BATCH_ACK_MESSAGE) {
@@ -182,7 +196,8 @@ public class AckMessageProcessor implements NettyRequestProcessor {
         }
         return response;
     }
-
+    // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG， ack 之后的消息就不会复活了
+    // 但是这里 ack 消息并不会推进原来 topic 对应 queue 的 commitOffset
     private void appendAck(final AckMessageRequestHeader requestHeader, final BatchAck batchAck,
         final RemotingCommand response, final Channel channel, String brokerName) throws RemotingCommandException {
         String[] extraInfo;
@@ -192,19 +207,26 @@ public class AckMessageProcessor implements NettyRequestProcessor {
         long popTime, invisibleTime;
         AckMsg ackMsg;
         int ackCount = 0;
+        // single ack 的时候 batchAck，brokerName 都为 null
         if (batchAck == null) {
             // single ack
+            // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
             extraInfo = ExtraInfoUtil.split(requestHeader.getExtraInfo());
             brokerName = ExtraInfoUtil.getBrokerName(extraInfo);
             consumeGroup = requestHeader.getConsumerGroup();
             topic = requestHeader.getTopic();
             qId = requestHeader.getQueueId();
+            // ReviveQid
             rqId = ExtraInfoUtil.getReviveQid(extraInfo);
+            // startOffset (broker 从哪里开启 pop 消息)
+            // 注意 broker 是一批一批的 pop 多个消息，ack 消息只是一批中的其中一个
+            // startOffset 表示 broker 从哪里开始 pop 多个消息的（pop的起点）
             startOffset = ExtraInfoUtil.getCkQueueOffset(extraInfo);
+            // msgQueueOffset
             ackOffset = requestHeader.getOffset();
             popTime = ExtraInfoUtil.getPopTime(extraInfo);
             invisibleTime = ExtraInfoUtil.getInvisibleTime(extraInfo);
-
+            // FIFO 消息在 reviveTopic 中只有一个队列 POP_ORDER_REVIVE_QUEUE
             if (rqId == KeyBuilder.POP_ORDER_REVIVE_QUEUE) {
                 ackOrderly(topic, consumeGroup, qId, ackOffset, popTime, invisibleTime, channel, response);
                 return;
@@ -269,12 +291,12 @@ public class AckMessageProcessor implements NettyRequestProcessor {
         ackMsg.setAckOffset(ackOffset);
         ackMsg.setPopTime(popTime);
         ackMsg.setBrokerName(brokerName);
-
+        // 更新 pop check point 中的 bit map, 对应位设置为 1 表示 ack
         if (this.brokerController.getPopMessageProcessor().getPopBufferMergeService().addAk(rqId, ackMsg)) {
             brokerController.getPopInflightMessageCounter().decrementInFlightMessageNum(topic, consumeGroup, popTime, qId, ackCount);
             return;
         }
-
+        // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
         msgInner.setTopic(reviveTopic);
         msgInner.setBody(JSON.toJSONString(ackMsg).getBytes(StandardCharsets.UTF_8));
@@ -292,6 +314,7 @@ public class AckMessageProcessor implements NettyRequestProcessor {
         msgInner.setDeliverTimeMs(popTime + invisibleTime);
         msgInner.getProperties().put(MessageConst.PROPERTY_UNIQ_CLIENT_MESSAGE_ID_KEYIDX, PopMessageProcessor.genAckUniqueId(ackMsg));
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgInner.getProperties()));
+        // appendAckAsync = false
         if (brokerController.getBrokerConfig().isAppendAckAsync()) {
             int finalAckCount = ackCount;
             this.brokerController.getEscapeBridge().asyncPutMessageToSpecificQueue(msgInner).thenAccept(putMessageResult -> {
@@ -303,6 +326,7 @@ public class AckMessageProcessor implements NettyRequestProcessor {
                 return null;
             });
         } else {
+            // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG
             PutMessageResult putMessageResult = this.brokerController.getEscapeBridge().putMessageToSpecificQueue(msgInner);
             handlePutMessageResult(putMessageResult, ackMsg, topic, consumeGroup, popTime, qId, ackCount);
         }
@@ -390,11 +414,16 @@ public class AckMessageProcessor implements NettyRequestProcessor {
 
     protected void ackOrderly(String topic, String consumeGroup, int qId, long ackOffset, long popTime,
         long invisibleTime, Channel channel, RemotingCommand response) {
+        // topic@consumerGroup@queueId
         String lockKey = topic + PopAckConstants.SPLIT + consumeGroup + PopAckConstants.SPLIT + qId;
         long oldOffset = this.brokerController.getConsumerOffsetManager().queryOffset(consumeGroup, topic, qId);
         if (ackOffset < oldOffset) {
             return;
         }
+        // 自旋锁
+        // pop 消息的时候以及 ack 消息的时候需要加锁
+        // pop 消息的时候 lock 失败，直接跳过，获取下一个 queuelock
+        // ack 消息的时候会一直 try lock 直到成功
         while (!this.brokerController.getPopMessageProcessor().getQueueLockManager().tryLock(lockKey)) {
         }
         try {
@@ -402,14 +431,24 @@ public class AckMessageProcessor implements NettyRequestProcessor {
             if (ackOffset < oldOffset) {
                 return;
             }
+            // 在 orderinfo bitmap 中标记 ack message
+            // nextOffset:
+            // 队列中所有的 pop 顺序消息都已经 ack
+            // 那就继续从最后一个 inflight 消息的下一个开始 pop
+            // 从第一个没有 ack 的 inflight 消息开始 pop
+            // 如果 ack 的是第二个消息，那么这里获取的仍然是第一个消息的 offset
             long nextOffset = brokerController.getConsumerOrderInfoManager().commitAndNext(
                 topic, consumeGroup, qId, ackOffset, popTime);
+            // -1 : illegal, -2 : no need commit, >= 0 : commit
             if (nextOffset > -1) {
+                // queue 中是否有 admin 中重置的 offset
                 if (!this.brokerController.getConsumerOffsetManager().hasOffsetReset(topic, consumeGroup, qId)) {
+                    // commit nextOffset(下一次 pop 从这里开始)
                     this.brokerController.getConsumerOffsetManager().commitOffset(
                         channel.remoteAddress().toString(), consumeGroup, topic, qId, nextOffset);
                 }
                 if (!this.brokerController.getConsumerOrderInfoManager().checkBlock(null, topic, consumeGroup, qId, invisibleTime)) {
+                    // 如果消息全部 ack 或者所有消息的 invisibleTime 达到，则通知 messageArrving
                     this.brokerController.getPopMessageProcessor().notifyMessageArriving(topic, qId, consumeGroup);
                 }
             } else if (nextOffset == -1) {

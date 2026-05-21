@@ -60,6 +60,9 @@ public class PopLongPollingService extends ServiceThread {
     // key : topic@cid（consumerGroup）@queueId ， value 不能超过 1024 popPollingSize
     // pop 模式下 queueId = -1 ，表示consumerGroup下的消费者可以消费所有队列
     // 所以对应的 topic@consumeGroup@queueId 中存放的是同一consumeGroup下所有消费者的 PopRequest(consumeGroup下所有消费者均可以消费该队列)
+    // value 跳表中的 PopRequest 排序规则：
+    // 1. 过期时间越近的排在最前面
+    // 2. op(全局计数COUNTER) 越小排在最前面
     private final ConcurrentLinkedHashMap<String, ConcurrentSkipListSet<PopRequest>> pollingMap;
     // 上一次执行 cleanUnusedResource 方法的时间戳
     private long lastCleanTime = 0;
@@ -373,12 +376,14 @@ public class PopLongPollingService extends ServiceThread {
             }
         }
         cids.putIfAbsent(requestHeader.getConsumerGroup(), Byte.MIN_VALUE);
+        // BornTime + PollTime （时间戳）
         long expired = requestHeader.getBornTime() + requestHeader.getPollTime();
         final PopRequest request = new PopRequest(remotingCommand, ctx, expired, subscriptionData, messageFilter);
         // maxPopPollingSize = 100000
         boolean isFull = totalPollingNum.get() >= this.brokerController.getBrokerConfig().getMaxPopPollingSize();
         if (isFull) {
             POP_LOGGER.info("polling {}, result POLLING_FULL, total:{}", remotingCommand, totalPollingNum.get());
+            // totalPollingNum >= 100000
             return POLLING_FULL;
         }
         boolean isTimeout = request.isTimeout();
@@ -388,8 +393,11 @@ public class PopLongPollingService extends ServiceThread {
             }
             return POLLING_TIMEOUT;
         }
+        // Topic@ConsumerGroup@QueueId
         String key = KeyBuilder.buildPollingKey(requestHeader.getTopic(), requestHeader.getConsumerGroup(),
             requestHeader.getQueueId());
+        // 1. 过期时间越近的排在最前面
+        // 2. op(全局计数COUNTER) 越小排在最前面
         ConcurrentSkipListSet<PopRequest> queue = pollingMap.get(key);
         if (queue == null) {
             queue = new ConcurrentSkipListSet<>(PopRequest.COMPARATOR);
@@ -488,6 +496,7 @@ public class PopLongPollingService extends ServiceThread {
             if (notifyLast) {
                 popRequest = remotingCommands.pollLast();
             } else {
+                // 默认
                 popRequest = remotingCommands.pollFirst();
             }
             totalPollingNum.decrementAndGet();

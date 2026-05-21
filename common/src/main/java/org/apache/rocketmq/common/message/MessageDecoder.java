@@ -74,7 +74,7 @@ public class MessageDecoder {
         input.flip();
         int msgIDLength = addr.limit() == 8 ? 16 : 28;
         input.limit(msgIDLength);
-
+        // storehost + CommitLogOffset
         input.put(addr);
         input.putLong(offset);
 
@@ -516,7 +516,7 @@ public class MessageDecoder {
                         }
                     }
 
-                    // inflate body
+                    // inflate body 解压缩 body
                     if (deCompressBody && (sysFlag & MessageSysFlag.COMPRESSED_FLAG) == MessageSysFlag.COMPRESSED_FLAG) {
                         Compressor compressor = CompressorFactory.getCompressor(MessageSysFlag.getCompressionType(sysFlag));
                         body = compressor.decompress(body);
@@ -554,6 +554,7 @@ public class MessageDecoder {
 
             int msgIDLength = storehostIPLength + 4 + 8;
             ByteBuffer byteBufferMsgId = ByteBuffer.allocate(msgIDLength);
+            // storehost + CommitLogOffset
             String msgId = createMessageId(byteBufferMsgId, msgExt.getStoreHostBytes(), msgExt.getCommitLogOffset());
             msgExt.setMsgId(msgId);
 
@@ -579,6 +580,7 @@ public class MessageDecoder {
         final boolean isClient) {
         List<MessageExt> msgExts = new ArrayList<>();
         while (byteBuffer.hasRemaining()) {
+            // 解码消息体，重新生成新的 msgId ：storehost + CommitLogOffset （返回给客户端的 msgId）
             MessageExt msgExt = decode(byteBuffer, readBody, decompressBody, isClient);
             if (null != msgExt) {
                 msgExts.add(msgExt);

@@ -225,6 +225,8 @@ public class BrokerConfig extends BrokerIdentity {
     private boolean enableSkipLongAwaitingAck = false;
     private long reviveAckWaitMs = TimeUnit.MINUTES.toMillis(3);
     private boolean enablePopLog = false;
+    // true : 则 popCheckPoint 保存在 PopBufferMergeService 中， ack message 的时候直接修改 PopBufferMergeService 中 check point 的 bitsmap
+    // false： 则 popCheckPoint 写入到 reviveTopic with CK_TAG , ack message 也是写入到 reviveTopic with AK_TAG
     private boolean enablePopBufferMerge = false;
     private int popCkStayBufferTime = 10 * 1000;
     private int popCkStayBufferTimeOut = 3 * 1000;

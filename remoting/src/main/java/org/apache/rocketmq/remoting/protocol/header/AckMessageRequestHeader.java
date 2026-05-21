@@ -31,14 +31,17 @@ public class AckMessageRequestHeader extends TopicQueueRequestHeader {
     @CFNotNull
     @RocketMQResource(ResourceType.GROUP)
     private String consumerGroup;
+    // 如果 topic 是 normal 这里不变，如果是 retry topic ，那么就还原为 retry topic
+    // 通过 topicType 判断
     @CFNotNull
     @RocketMQResource(ResourceType.TOPIC)
     private String topic;
     @CFNotNull
     private Integer queueId;
+    // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
     @CFNotNull
     private String extraInfo;
-
+    // msgQueueOffset
     @CFNotNull
     private Long offset;
 

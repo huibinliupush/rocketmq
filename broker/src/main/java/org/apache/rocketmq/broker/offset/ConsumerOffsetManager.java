@@ -40,16 +40,19 @@ import org.apache.rocketmq.logging.org.slf4j.Logger;
 import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 import org.apache.rocketmq.remoting.protocol.DataVersion;
 import org.apache.rocketmq.remoting.protocol.RemotingSerializable;
-
+ // 每隔 5s 持久化
 public class ConsumerOffsetManager extends ConfigManager {
     protected static final Logger LOG = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     public static final String TOPIC_GROUP_SEPARATOR = "@";
 
     protected DataVersion dataVersion = new DataVersion();
     // 加载自 user.home/store/config/consumerOffset.json
+    // 队列中已经提交的 offset
     protected ConcurrentMap<String/* topic@group */, ConcurrentMap<Integer, Long>> offsetTable =
         new ConcurrentHashMap<>(512);
-
+    // add a map on the server-side to temporarily store the request to reset the offset
+    // https://github.com/apache/rocketmq/wiki/RIP-48-Enhance-server-side-offset-management-ability
+    // topic@group -> queueId -> offset
     private final ConcurrentMap<String, ConcurrentMap<Integer, Long>> resetOffsetTable =
         new ConcurrentHashMap<>(512);
 
@@ -203,6 +206,7 @@ public class ConsumerOffsetManager extends ConfigManager {
     }
 
     private void commitOffset(final String clientHost, final String key, final int queueId, final long offset) {
+        // 比直接使用 computeIfAbsent 性能更高
         ConcurrentMap<Integer, Long> map = this.offsetTable.get(key);
         if (null == map) {
             map = new ConcurrentHashMap<>(32);
@@ -241,7 +245,9 @@ public class ConsumerOffsetManager extends ConfigManager {
         // topic@group
         String key = topic + TOPIC_GROUP_SEPARATOR + group;
         // https://github.com/apache/rocketmq/wiki/RIP-48-Enhance-server-side-offset-management-ability
+        // useServerSideResetOffset = true;
         if (this.brokerController.getBrokerConfig().isUseServerSideResetOffset()) {
+            // We add a map on the server-side to temporarily store the request to reset the offset,
             Map<Integer, Long> reset = resetOffsetTable.get(key);
             if (null != reset && reset.containsKey(queueId)) {
                 return reset.get(queueId);

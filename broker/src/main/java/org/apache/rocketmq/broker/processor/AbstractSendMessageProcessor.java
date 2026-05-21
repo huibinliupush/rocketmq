@@ -88,7 +88,8 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
     public void registerConsumeMessageHook(List<ConsumeMessageHook> consumeMessageHookList) {
         this.consumeMessageHookList = consumeMessageHookList;
     }
-
+    // 将消息发送到 RetryTopic: %RETRY%consumerGroup 或者 DLQTopic : %DLQ%consumerGroup
+    // 每个 consumerGroup 一个死信队列
     protected RemotingCommand consumerSendMsgBack(final ChannelHandlerContext ctx, final RemotingCommand request)
         throws RemotingCommandException {
         final RemotingCommand response = RemotingCommand.createResponseCommand(null);
@@ -106,7 +107,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
         // The broker that received the request.
         // It may be a master broker or a slave broker
         final BrokerController currentBroker = this.brokerController;
-
+        // 消费者组对应的订阅关系
         SubscriptionGroupConfig subscriptionGroupConfig =
             masterBroker.getSubscriptionGroupManager().findSubscriptionGroupConfig(requestHeader.getGroup());
         if (null == subscriptionGroupConfig) {
@@ -117,18 +118,19 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
         }
 
         BrokerConfig masterBrokerConfig = masterBroker.getBrokerConfig();
+        // broker 不可写
         if (!PermName.isWriteable(masterBrokerConfig.getBrokerPermission())) {
             response.setCode(ResponseCode.NO_PERMISSION);
             response.setRemark("the broker[" + masterBrokerConfig.getBrokerIP1() + "] sending message is forbidden");
             return response;
         }
-
+        // retryQueueNums = 1 , 对应的 retry topic ： %RETRY%consumerGroup_topic
         if (subscriptionGroupConfig.getRetryQueueNums() <= 0) {
             response.setCode(ResponseCode.SUCCESS);
             response.setRemark(null);
             return response;
         }
-
+        // RetryTopic: %RETRY%consumerGroup
         String newTopic = MixAll.getRetryTopic(requestHeader.getGroup());
         int queueIdInt = this.random.nextInt(subscriptionGroupConfig.getRetryQueueNums());
 
@@ -155,7 +157,8 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
         }
 
         // Look message from the origin message store
-        MessageExt msgExt = currentBroker.getMessageStore().lookMessageByOffset(requestHeader.getOffset());
+        // 从 commitlog 中查询消息
+        MessageExt msgExt = currentBroker.getMessageStore().lookMessageByOffset(requestHeader.getOffset());// CommitLogOffset
         if (null == msgExt) {
             response.setCode(ResponseCode.SYSTEM_ERROR);
             response.setRemark("look message by offset failed, " + requestHeader.getOffset());
@@ -166,22 +169,26 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
         if (null == retryTopic) {
             MessageAccessor.putProperty(msgExt, MessageConst.PROPERTY_RETRY_TOPIC, msgExt.getTopic());
         }
+        // 发送 message 不需要同步等待
         msgExt.setWaitStoreMsgOK(false);
-
+        // -1
         int delayLevel = requestHeader.getDelayLevel();
-
+        // 16
         int maxReconsumeTimes = subscriptionGroupConfig.getRetryMaxTimes();
         if (request.getVersion() >= MQVersion.Version.V3_4_9.ordinal()) {
+            // 0
             Integer times = requestHeader.getMaxReconsumeTimes();
             if (times != null) {
+                // 0
                 maxReconsumeTimes = times;
             }
         }
 
         boolean isDLQ = false;
-        if (msgExt.getReconsumeTimes() >= maxReconsumeTimes
+        // 消息已经被消费的次数
+        if (msgExt.getReconsumeTimes() >= maxReconsumeTimes // 0
             || delayLevel < 0) {
-
+            // 发送到死信队列
             Attributes attributes = BrokerMetricsManager.newAttributesBuilder()
                 .put(LABEL_CONSUMER_GROUP, requestHeader.getGroup())
                 .put(LABEL_TOPIC, requestHeader.getOriginTopic())
@@ -190,7 +197,9 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
             BrokerMetricsManager.sendToDlqMessages.add(1, attributes);
 
             isDLQ = true;
+            // DLQTopic : %DLQ%consumerGroup
             newTopic = MixAll.getDLQTopic(requestHeader.getGroup());
+            // DLQ_NUMS_PER_GROUP = 1
             queueIdInt = randomQueueId(DLQ_NUMS_PER_GROUP);
 
             // Create DLQ topic to master broker
@@ -213,13 +222,16 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
         }
 
         MessageExtBrokerInner msgInner = new MessageExtBrokerInner();
+        // DLQTopic : %DLQ%consumerGroup
+        // RetryTopic: %RETRY%consumerGroup
         msgInner.setTopic(newTopic);
         msgInner.setBody(msgExt.getBody());
         msgInner.setFlag(msgExt.getFlag());
         MessageAccessor.setProperties(msgInner, msgExt.getProperties());
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgExt.getProperties()));
         msgInner.setTagsCode(MessageExtBrokerInner.tagsString2tagsCode(null, msgExt.getTags()));
-
+        // RetryQueueNums
+        // DLQ_NUMS_PER_GROUP
         msgInner.setQueueId(queueIdInt);
         msgInner.setSysFlag(msgExt.getSysFlag());
         msgInner.setBornTimestamp(msgExt.getBornTimestamp());

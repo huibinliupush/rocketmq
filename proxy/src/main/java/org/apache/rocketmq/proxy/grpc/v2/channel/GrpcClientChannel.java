@@ -62,7 +62,7 @@ public class GrpcClientChannel extends ProxyChannel implements ChannelExtendAttr
 
     private final GrpcChannelManager grpcChannelManager;
     private final GrpcClientSettingsManager grpcClientSettingsManager;
-
+    // 发往客户端的 response StreamObserver
     private final AtomicReference<StreamObserver<TelemetryCommand>> telemetryCommandRef = new AtomicReference<>();
     private final Object telemetryWriteLock = new Object();
     private final String clientId;

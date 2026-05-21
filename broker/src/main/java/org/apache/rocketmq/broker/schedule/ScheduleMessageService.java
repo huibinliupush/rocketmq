@@ -62,6 +62,7 @@ import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_CON
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_IS_SYSTEM;
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_MESSAGE_TYPE;
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_TOPIC;
+// 延时消息的核心实现
 
 public class ScheduleMessageService extends ConfigManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
@@ -71,16 +72,30 @@ public class ScheduleMessageService extends ConfigManager {
     private static final long DELAY_FOR_A_PERIOD = 10000L;
     private static final long WAIT_FOR_SHUTDOWN = 5000L;
     private static final long DELAY_FOR_A_SLEEP = 10L;
-
+    // delayLevel -> 延时时长
+    // 1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
+    // 18 级
     private final ConcurrentSkipListMap<Integer /* level */, Long/* delay timeMillis */> delayLevelTable =
         new ConcurrentSkipListMap<>();
     // 加载自 storePath/config/delayOffset.json 文件
+    // 缓存管理延时消息的投递进度
+    // 按照 delayLevel 分类，delayLevel 可以看做是 RMQ_SYS_SCHEDULE_TOPIC 下的一个 queue
+    // 一个 delayLevel 对应一个 queue, 每个 queue 中的延时消息由 deliverExecutorService 中的一个线程负责投递
+    // 投递成功一个 ，这里的 queue offset 先前推进一个，offset 指示的是当前需要投递的延时消息，延时到期就投递，投递成功之后 offset 向前推进
+    // 延时未到期或者投递失败，offset 不变
     private final ConcurrentMap<Integer /* level */, Long/* offset */> offsetTable =
         new ConcurrentHashMap<>(32);
     private final AtomicBoolean started = new AtomicBoolean(false);
+    // 线程数对应 maxDelayLevel（18） ，一个 delayLevel 对应一个线程
+    // 有界 DelayedWorkQueue 初始容量 16 （JDK 默认），注意这里的 queue 保存的是所有 delayLevel 的延时消息
+    // 每个 delayLevel 队首的延时消息，如果还未到期就会被重新投递到 DelayedWorkQueue 中
+    // 防止阻塞 deliverExecutorService 线程
     private ScheduledExecutorService deliverExecutorService;
+    // 1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
+    // 18 级
     private int maxDelayLevel;
     private DataVersion dataVersion = new DataVersion();
+    // 默认 false
     private boolean enableAsyncDeliver = false;
     private ScheduledExecutorService handleExecutorService;
     private final ScheduledExecutorService scheduledPersistService;
@@ -135,6 +150,9 @@ public class ScheduleMessageService extends ConfigManager {
     public void start() {
         if (started.compareAndSet(false, true)) {
             this.load();
+            // 1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
+            // 18 级
+            // 线程数对应 maxDelayLevel ，一个 delayLevel 对应一个线程
             this.deliverExecutorService = ThreadUtils.newScheduledThreadPool(this.maxDelayLevel, new ThreadFactoryImpl("ScheduleMessageTimerThread_"));
             if (this.enableAsyncDeliver) {
                 this.handleExecutorService = ThreadUtils.newScheduledThreadPool(this.maxDelayLevel, new ThreadFactoryImpl("ScheduleMessageExecutorHandleThread_"));
@@ -148,9 +166,13 @@ public class ScheduleMessageService extends ConfigManager {
                 }
 
                 if (timeDelay != null) {
+                    // false
                     if (this.enableAsyncDeliver) {
                         this.handleExecutorService.schedule(new HandlePutResultTask(level), FIRST_DELAY_TIME, TimeUnit.MILLISECONDS);
                     }
+                    // 订阅 RMQ_SYS_SCHEDULE_TOPIC， 该 topic 下共有 18 个队列对应 18级 DelayLevel
+                    // 每个线程负责处理一个 DelayLevel（可以看做是 RMQ_SYS_SCHEDULE_TOPIC 下的一个 queue）
+                    // 如果 queue 中消息已经达到投递时间，那么就写入commitlog
                     this.deliverExecutorService.schedule(new DeliverDelayedMessageTimerTask(level, offset), FIRST_DELAY_TIME, TimeUnit.MILLISECONDS);
                 }
             }
@@ -304,7 +326,8 @@ public class ScheduleMessageService extends ConfigManager {
         timeUnitTable.put("m", 1000L * 60);
         timeUnitTable.put("h", 1000L * 60 * 60);
         timeUnitTable.put("d", 1000L * 60 * 60 * 24);
-
+        // 1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h
+        // 18 级
         String levelString = this.brokerController.getMessageStoreConfig().getMessageDelayLevel();
         try {
             String[] levelArray = levelString.split(" ");
@@ -351,12 +374,13 @@ public class ScheduleMessageService extends ConfigManager {
         msgInner.setReconsumeTimes(msgExt.getReconsumeTimes());
 
         msgInner.setWaitStoreMsgOK(false);
+        // 清除延时消息属性
         MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_DELAY_TIME_LEVEL);
         MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_TIMER_DELIVER_MS);
         MessageAccessor.clearProperty(msgInner, MessageConst.PROPERTY_TIMER_DELAY_SEC);
-
+        // 还原 origin topic
         msgInner.setTopic(msgInner.getProperty(MessageConst.PROPERTY_REAL_TOPIC));
-
+        // 还原 origin topic queue
         String queueIdStr = msgInner.getProperty(MessageConst.PROPERTY_REAL_QUEUE_ID);
         int queueId = Integer.parseInt(queueIdStr);
         msgInner.setQueueId(queueId);
@@ -365,7 +389,9 @@ public class ScheduleMessageService extends ConfigManager {
     }
 
     class DeliverDelayedMessageTimerTask implements Runnable {
+        // 可以看做 RMQ_SYS_SCHEDULE_TOPIC 中的 queueId
         private final int delayLevel;
+        // queueId 对应的 offset
         private final long offset;
 
         public DeliverDelayedMessageTimerTask(int delayLevel, long offset) {
@@ -377,6 +403,10 @@ public class ScheduleMessageService extends ConfigManager {
         public void run() {
             try {
                 if (isStarted()) {
+                    // 每个线程负责处理一个 DelayLevel（可以看做是 RMQ_SYS_SCHEDULE_TOPIC 下的一个 queue）
+                    // 如果 queue 中消息已经达到投递时间，那么就写入commitlog
+                    // 每个 delayLevel 队首的延时消息，如果还未到期就会被重新投递到 DelayedWorkQueue 中
+                    // 防止阻塞 deliverExecutorService 线程
                     this.executeOnTimeUp();
                 }
             } catch (Throwable e) {
@@ -399,15 +429,18 @@ public class ScheduleMessageService extends ConfigManager {
         }
 
         public void executeOnTimeUp() {
+            // 获取 delayLevel 对应的 queue (RMQ_SYS_SCHEDULE_TOPIC)
             ConsumeQueueInterface cq =
                 ScheduleMessageService.this.brokerController.getMessageStore().getConsumeQueue(TopicValidator.RMQ_SYS_SCHEDULE_TOPIC,
                     delayLevel2QueueId(delayLevel));
 
             if (cq == null) {
+                // DELAY_FOR_A_WHILE = 100L
+                // 延时 100ms 在来拉取 delayLevel 对应的 queue
                 this.scheduleNextTimerTask(this.offset, DELAY_FOR_A_WHILE);
                 return;
             }
-
+            // 从 offset 处开始获取延时消息索引
             ReferredIterator<CqUnit> bufferCQ = cq.iterateFrom(this.offset);
             if (bufferCQ == null) {
                 long resetOffset;
@@ -420,7 +453,7 @@ public class ScheduleMessageService extends ConfigManager {
                 } else {
                     resetOffset = this.offset;
                 }
-
+                // 延时 100ms 从新的 resetOffset 处开始拉取 delayLevel 对应的 queue
                 this.scheduleNextTimerTask(resetOffset, DELAY_FOR_A_WHILE);
                 return;
             }
@@ -442,24 +475,32 @@ public class ScheduleMessageService extends ConfigManager {
                     }
 
                     long now = System.currentTimeMillis();
+                    // 消息存储时间 + 延时时间（delayLevel）
                     long deliverTimestamp = this.correctDeliverTimestamp(now, tagsCode);
 
                     long currOffset = cqUnit.getQueueOffset();
                     assert cqUnit.getBatchNum() == 1;
+                    // 下一个延时消息
                     nextOffset = currOffset + cqUnit.getBatchNum();
 
                     long countdown = deliverTimestamp - now;
                     if (countdown > 0) {
+                        // 如果 currOffset 延时消息还未到期，那么就等 100ms 再来查看是否到期，注意这里不会阻塞线程
+                        // 每个 delayLevel 队首的延时消息，如果还未到期就会被重新投递到 DelayedWorkQueue 中
+                        // 防止阻塞 deliverExecutorService 线程
                         this.scheduleNextTimerTask(currOffset, DELAY_FOR_A_WHILE);
+                        // 由于延时消息没有投递，所有进度依然是 currOffset
                         ScheduleMessageService.this.updateOffset(this.delayLevel, currOffset);
                         return;
                     }
-
+                    // currOffset 延时消息到期
+                    // 从 commitlog 中获取延时消息，注意这里的 topic 是 RMQ_SYS_SCHEDULE_TOPIC 而不是 origin topic
                     MessageExt msgExt = ScheduleMessageService.this.brokerController.getMessageStore().lookMessageByOffset(offsetPy, sizePy);
                     if (msgExt == null) {
                         continue;
                     }
-
+                    // currOffset 延时消息到期
+                    // 还原 origin topic 以及 origin queue
                     MessageExtBrokerInner msgInner = ScheduleMessageService.this.messageTimeUp(msgExt);
                     if (TopicValidator.RMQ_SYS_TRANS_HALF_TOPIC.equals(msgInner.getTopic())) {
                         log.error("[BUG] the real topic of schedule msg is {}, discard the msg. msg={}",
@@ -471,10 +512,13 @@ public class ScheduleMessageService extends ConfigManager {
                     if (ScheduleMessageService.this.enableAsyncDeliver) {
                         deliverSuc = this.asyncDeliver(msgInner, msgExt.getMsgId(), currOffset, offsetPy, sizePy);
                     } else {
+                        // 发送到 commitlog, 投递到期的延时消息
+                        // 延时消息投递进度向前推进到 NextOffset
                         deliverSuc = this.syncDeliver(msgInner, msgExt.getMsgId(), currOffset, offsetPy, sizePy);
                     }
 
                     if (!deliverSuc) {
+                        // 投递失败还原投递进度
                         this.scheduleNextTimerTask(currOffset, DELAY_FOR_A_WHILE);
                         return;
                     }
@@ -495,10 +539,12 @@ public class ScheduleMessageService extends ConfigManager {
 
         private boolean syncDeliver(MessageExtBrokerInner msgInner, String msgId, long offset, long offsetPy,
             int sizePy) {
+            // 发送到 commitlog
             PutResultProcess resultProcess = deliverMessage(msgInner, msgId, offset, offsetPy, sizePy, false);
             PutMessageResult result = resultProcess.get();
             boolean sendStatus = result != null && result.getPutMessageStatus() == PutMessageStatus.PUT_OK;
             if (sendStatus) {
+                // 延时消息投递进度向前推进到 NextOffset
                 ScheduleMessageService.this.updateOffset(this.delayLevel, resultProcess.getNextOffset());
             }
             return sendStatus;

@@ -45,11 +45,13 @@ public class ChangeInvisibleDurationActivity extends AbstractMessingActivity {
 
         try {
             validateTopicAndConsumerGroup(request.getTopic(), request.getGroup());
+            // 不能超过 12h
             validateInvisibleTime(Durations.toMillis(request.getInvisibleDuration()));
 
             ReceiptHandle receiptHandle = ReceiptHandle.decode(request.getReceiptHandle());
             String group = request.getGroup().getName();
-
+            // 当消息 ack 之后，将 msgID -> messageReceiptHandle 从 ReceiptHandleGroup 中删除
+            // changeInvisibleTime 的时候也会将原有消息的  messageReceiptHandle 删除
             MessageReceiptHandle messageReceiptHandle = messagingProcessor.removeReceiptHandle(ctx, grpcChannelManager.getChannel(ctx.getClientID()), group, request.getMessageId(), receiptHandle.getReceiptHandle());
             if (messageReceiptHandle != null) {
                 receiptHandle = ReceiptHandle.decode(messageReceiptHandle.getReceiptHandleStr());

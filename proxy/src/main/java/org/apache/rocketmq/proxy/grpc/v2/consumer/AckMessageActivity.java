@@ -55,6 +55,7 @@ public class AckMessageActivity extends AbstractMessingActivity {
             validateTopicAndConsumerGroup(request.getTopic(), request.getGroup());
             String group = request.getGroup().getName();
             String topic = request.getTopic().getName();
+            // enableBatchAck = false
             if (ConfigurationManager.getProxyConfig().isEnableBatchAck()) {
                 future = ackMessageInBatch(ctx, group, topic, request);
             } else {
@@ -107,11 +108,30 @@ public class AckMessageActivity extends AbstractMessingActivity {
 
     protected CompletableFuture<AckMessageResponse> ackMessageOneByOne(ProxyContext ctx, String group, String topic, AckMessageRequest request) {
         CompletableFuture<AckMessageResponse> resultFuture = new CompletableFuture<>();
+        // AckMessageResultEntry 表示 ack 的具体 message
         CompletableFuture<AckMessageResultEntry>[] futures = new CompletableFuture[request.getEntriesCount()];
         for (int i = 0; i < request.getEntriesCount(); i++) {
+            // 一个消息一个消息的 ack
+            // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG， ack 之后的消息就不会复活了
+            // 但是这里 ack 消息并不会推进原来 topic 对应 queue 的 commitOffset
+            // pop 消息的 offset 由 broker 的 popMessageProcessor 负责推进，拉一批往前推一批
+            // 由于是消费者组并发 pop,所以需要保证其他消费者可以 pop 的接下来的消息，offset 只能一直向前推
+            // 而 ack pop message 只能保证它不会被重试
             futures[i] = processAckMessage(ctx, group, topic, request, request.getEntries(i));
         }
+        // 用于等待一组 CompletableFuture 全部正常完成。它非常适合“并行执行多个独立异步任务，
+        // 待所有任务结束后再做后续处理”的场景（如批量查询、数据聚合等）。
+        // 返回值：一个新的 CompletableFuture<Void>，当所有给定的 CompletableFuture 都正常完成后，
+        // 这个返回的 Future 也会正常完成（值为 null）；如果其中任意一个异常完成或取消，则返回的 Future 会以相同的异常完成。
+        // 结果类型为 Void：allOf 本身不直接聚合各个 Future 的结果。你需要自己持有原始的 CompletableFuture 引用，
+        // 在它们全部完成后手动调用 join() 或 get() 获取每个结果。
+        // 异常传播：只要有一个 CompletableFuture 异常完成（或取消），返回的 Future 就会立即以相同异常完成（不会等待其他未完成的 Future）
+        // allOf 只负责等待，不负责提取结果。开发者需要自己保存原始 Future 并调用 join() 获取值。
+        // CompletableFuture.allOf 是实现并行任务同步点的核心工具。它不直接提供聚合结果，而是提供一个“全部完成”的信号，
+        // 你需要自行保存原始任务并提取结果。与 anyOf（竞速）、thenCombine（固定两个任务的合并）相比，allOf 更适合数量不固定、
+        // 需要整体等待的场景。结合流式 API，可以优雅地处理批量异步任务。注意异常传播机制：一错俱错。
         CompletableFuture.allOf(futures).whenComplete((val, throwable) -> {
+            // 所有 ack message 完成之后回调
             if (throwable != null) {
                 resultFuture.completeExceptionally(throwable);
                 return;
@@ -119,7 +139,7 @@ public class AckMessageActivity extends AbstractMessingActivity {
 
             Set<Code> responseCodes = new HashSet<>();
             List<AckMessageResultEntry> entryList = new ArrayList<>();
-            for (CompletableFuture<AckMessageResultEntry> entryFuture : futures) {
+            for (CompletableFuture<AckMessageResultEntry> entryFuture : futures) { // 自己持有原始的 CompletableFuture 引用
                 AckMessageResultEntry entryResult = entryFuture.join();
                 responseCodes.add(entryResult.getStatus().getCode());
                 entryList.add(entryResult);
@@ -137,6 +157,7 @@ public class AckMessageActivity extends AbstractMessingActivity {
         CompletableFuture<AckMessageResultEntry> future = new CompletableFuture<>();
 
         try {
+            // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
             String handleString = this.getHandleString(ctx, group, request, ackMessageEntry);
             CompletableFuture<AckResult> ackResultFuture = this.messagingProcessor.ackMessage(
                 ctx,
@@ -196,8 +217,10 @@ public class AckMessageActivity extends AbstractMessingActivity {
         String handleString = ackMessageEntry.getReceiptHandle();
         GrpcClientChannel channel = grpcChannelManager.getChannel(ctx.getClientID());
         if (channel != null) {
+            // 当消息 ack 之后，将 msgID -> messageReceiptHandle 从 ReceiptHandleGroup 中删除
             MessageReceiptHandle messageReceiptHandle = messagingProcessor.removeReceiptHandle(ctx, channel, group, ackMessageEntry.getMessageId(), ackMessageEntry.getReceiptHandle());
             if (messageReceiptHandle != null) {
+                // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
                 handleString = messageReceiptHandle.getReceiptHandleStr();
             }
         }

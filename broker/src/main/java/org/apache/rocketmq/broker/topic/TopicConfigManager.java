@@ -77,12 +77,16 @@ public class TopicConfigManager extends ConfigManager {
     }
 
     public TopicConfigManager(BrokerController brokerController) {
+        // 初始化系统级 topic 包括 brokerClusterName
+        // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
         this(brokerController, true);
     }
 
     public TopicConfigManager(BrokerController brokerController, boolean init) {
         this.brokerController = brokerController;
         if (init) {
+            // 初始化系统级 topic 包括 brokerClusterName
+            // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
             init();
         }
     }
@@ -155,8 +159,8 @@ public class TopicConfigManager extends ConfigManager {
             String topic = TopicValidator.RMQ_SYS_SCHEDULE_TOPIC;
             TopicConfig topicConfig = new TopicConfig(topic);
             TopicValidator.addSystemTopic(topic);
-            topicConfig.setReadQueueNums(SCHEDULE_TOPIC_QUEUE_NUM);
-            topicConfig.setWriteQueueNums(SCHEDULE_TOPIC_QUEUE_NUM);
+            topicConfig.setReadQueueNums(SCHEDULE_TOPIC_QUEUE_NUM);// 18
+            topicConfig.setWriteQueueNums(SCHEDULE_TOPIC_QUEUE_NUM);// 18
             putTopicConfig(topicConfig);
         }
         {
@@ -182,8 +186,8 @@ public class TopicConfigManager extends ConfigManager {
             String topic = PopAckConstants.buildClusterReviveTopic(this.brokerController.getBrokerConfig().getBrokerClusterName());
             TopicConfig topicConfig = new TopicConfig(topic);
             TopicValidator.addSystemTopic(topic);
-            topicConfig.setReadQueueNums(this.brokerController.getBrokerConfig().getReviveQueueNum());
-            topicConfig.setWriteQueueNums(this.brokerController.getBrokerConfig().getReviveQueueNum());
+            topicConfig.setReadQueueNums(this.brokerController.getBrokerConfig().getReviveQueueNum());// 8
+            topicConfig.setWriteQueueNums(this.brokerController.getBrokerConfig().getReviveQueueNum());// 8
             putTopicConfig(topicConfig);
         }
         {
@@ -218,7 +222,7 @@ public class TopicConfigManager extends ConfigManager {
 
         {
             if (this.brokerController.getMessageStoreConfig().isTimerWheelEnable()) {
-                String topic = TimerMessageStore.TIMER_TOPIC;
+                String topic = TimerMessageStore.TIMER_TOPIC; // rmq_sys_wheel_timer
                 TopicConfig topicConfig = new TopicConfig(topic);
                 TopicValidator.addSystemTopic(topic);
                 topicConfig.setReadQueueNums(1);

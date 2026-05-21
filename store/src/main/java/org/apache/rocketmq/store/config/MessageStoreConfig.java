@@ -217,6 +217,9 @@ public class MessageStoreConfig {
     private int maxTransferCountOnMessageInDisk = 8;
     // 保留在内存中的消息 size 为 机器内存总量的百分之 accessMessageInMemoryMaxRatio
     // slave broker 为 accessMessageInMemoryMaxRatio - 10
+    // 在 consumer 拉取消息的时候会判断要拉取的消息是否在内存中
+    // org.apache.rocketmq.store.DefaultMessageStore.getMessage(java.lang.String, java.lang.String, int, long, int, int, org.apache.rocketmq.store.MessageFilter)
+    // 在内存中的消息量是总体物理内存的 40% （从 commitlog 的 maxOffsetPy 往前推 40%的总物理内存量）
     @ImportantField
     private int accessMessageInMemoryMaxRatio = 40;
     @ImportantField
@@ -247,6 +250,7 @@ public class MessageStoreConfig {
     // Used by PutMessage to wait messages be flushed to disk and synchronized in current broker member group.
     private int putMessageTimeout = 1000 * 8;
     private int slaveTimeout = 3000;
+    // 18 级
     private String messageDelayLevel = "1s 5s 10s 30s 1m 2m 3m 4m 5m 6m 7m 8m 9m 10m 20m 30m 1h 2h";
     private long flushDelayOffsetInterval = 1000 * 10;
     @ImportantField
@@ -256,6 +260,9 @@ public class MessageStoreConfig {
     private boolean debugLockEnable = false;
     // true 表示不需要 HandleHA
     private boolean duplicationEnable = false;
+    // 当前 commitlog 最大的 offset 减去本次拉取消息的最大 offset
+    // long fallBehind = maxOffsetPy - maxPhyOffsetPulling;
+    // 记录 queueId 中还有多少消息没有被 consumerGroup 拉取
     private boolean diskFallRecorded = true;
     private long osPageCacheBusyTimeOutMills = 1000;
     private int defaultQueryMaxNum = 32;
@@ -434,6 +441,10 @@ public class MessageStoreConfig {
     private boolean dataReadAheadEnable = true; // 是否对文件进行预读
     private int timerColdDataCheckIntervalMs = 60 * 1000;
     private int sampleSteps = 32;
+    // The ratio val is estimated by the experiment and experience
+    // 意思是 26% 的物理内存总量（commitlog 中的数据）可能会在内存中，剩下的可能在磁盘中
+    // 用于粗略判断 cold data
+    // org.apache.rocketmq.store.DefaultMessageStore.checkInColdAreaByCommitOffset
     private int accessMessageInMemoryHotRatio = 26;
     /**
      * Build ConsumeQueue concurrently with multi-thread

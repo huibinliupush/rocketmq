@@ -30,19 +30,23 @@ import org.apache.rocketmq.remoting.rpc.RpcRequestHeader;
 
 @RocketMQAction(value = RequestCode.CONSUMER_SEND_MSG_BACK, action = Action.SUB)
 public class ConsumerSendMsgBackRequestHeader extends RpcRequestHeader {
+    // CommitLogOffset
     @CFNotNull
     private Long offset;
     @CFNotNull
     @RocketMQResource(ResourceType.GROUP)
-    private String group;
+    private String group; // consumerGroup
     @CFNotNull
-    private Integer delayLevel;
+    private Integer delayLevel;// -1
+    // storehost + CommitLogOffset
     private String originMsgId;
+    // 如果该消息是重试消息，那么需要还原 topic 为 retry topic （ %RETRY%consumerGroup_topic）
+    // broker 端在拉取 retry message 之后会将 retry topic 转换为 normal topic
     @RocketMQResource(ResourceType.TOPIC)
     private String originTopic;
     @CFNullable
     private boolean unitMode = false;
-    private Integer maxReconsumeTimes;
+    private Integer maxReconsumeTimes;// 0
 
     @Override
     public void checkFields() throws RemotingCommandException {

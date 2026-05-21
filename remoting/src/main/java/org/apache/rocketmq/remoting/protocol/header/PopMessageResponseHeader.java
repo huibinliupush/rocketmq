@@ -27,7 +27,8 @@ public class PopMessageResponseHeader implements CommandCustomHeader {
     private long popTime;
     @CFNotNull
     private long invisibleTime;
-
+    // 未到 invisibleTime 的 infight 消息存储 ReviveTopic 中，时间一到，投递到 ReviveQid
+    // 所以 reviveQid 中存储的都是已到 invisibleTime 的 infight 消息，重新可见
     @CFNotNull
     private int reviveQid;
     /**
@@ -35,9 +36,18 @@ public class PopMessageResponseHeader implements CommandCustomHeader {
      */
     @CFNotNull
     private long restNum;
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+    // 0->queueId->startOffset
+    // 从多个 queue 拉消息就对应多条记录
 
     private String startOffsetInfo;
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+    // 0->queueId-> msgQueueOffsets
+    // 从多个 queue 拉消息就对应多条记录
     private String msgOffsetInfo;
+    // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
+    // 0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
+    // 拉取了多少条顺序消息就对应多少记录
     private String orderCountInfo;
 
     @Override

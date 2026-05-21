@@ -119,7 +119,7 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
             1,
             TimeUnit.MINUTES,
             "GrpcConsumerThreadPool",
-            config.getGrpcConsumerThreadQueueCapacity()
+            config.getGrpcConsumerThreadQueueCapacity() // 10000
         );
         // PROCESSOR_NUMBER
         this.clientManagerThreadPoolExecutor = ThreadPoolMonitor.createAndMonitor(
@@ -319,7 +319,7 @@ public class GrpcMessagingApplication extends MessagingServiceGrpc.MessagingServ
             writeResponse(context, request, null, responseObserver, t, statusResponseCreator);
         }
     }
-
+    // 一个 consumerGroup 对应一个死信队列 DLQTopic : %DLQ%consumerGroup
     @Override
     public void forwardMessageToDeadLetterQueue(ForwardMessageToDeadLetterQueueRequest request,
         StreamObserver<ForwardMessageToDeadLetterQueueResponse> responseObserver) {

@@ -1029,6 +1029,7 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
 
     @Override
     public ReferredIterator<CqUnit> iterateFrom(long startOffset) {
+        // 从 consumerQueue 文件中获取从 offset 开始到 writePosition 之间的 buffer
         SelectMappedBufferResult sbr = getIndexBuffer(startOffset);
         if (sbr == null) {
             return null;
@@ -1043,10 +1044,12 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
 
     @Override
     public CqUnit get(long offset) {
+        // 从 consumerQueue 文件中获取从 offset 开始到 writePosition 之间的 buffer
         ReferredIterator<CqUnit> it = iterateFrom(offset);
         if (it == null) {
             return null;
         }
+        // 获取一个 unit
         return it.nextAndRelease();
     }
 
@@ -1096,7 +1099,9 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
     }
 
     private class ConsumeQueueIterator implements ReferredIterator<CqUnit> {
+        // 从 consumerQueue 文件中获取从 offset 开始到 writePosition 之间的 buffer
         private SelectMappedBufferResult sbr;
+        // 所在 mappedFile 中的 position(文件内)
         private int relativePos = 0;
 
         public ConsumeQueueIterator(SelectMappedBufferResult sbr) {

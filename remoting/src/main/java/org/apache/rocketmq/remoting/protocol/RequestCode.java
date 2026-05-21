@@ -52,6 +52,7 @@ public class RequestCode {
     public static final int HEART_BEAT = 34;
 
     public static final int UNREGISTER_CLIENT = 35;
+    // 将消息发送到 RetryTopic: %RETRY%consumerGroup 或者 DLQTopic : %DLQ%consumerGroup
 
     public static final int CONSUMER_SEND_MSG_BACK = 36;
 

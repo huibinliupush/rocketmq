@@ -20,10 +20,12 @@ import java.util.List;
 import org.apache.rocketmq.common.message.MessageExt;
 
 public class PopResult {
+    // 从 broker 拉取到的消息
     private List<MessageExt> msgFoundList;
     private PopStatus popStatus;
     private long popTime;
     private long invisibleTime;
+    // the rest num in queue
     private long restNum;
 
     public PopResult(PopStatus popStatus, List<MessageExt> msgFoundList) {

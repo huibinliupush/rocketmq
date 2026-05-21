@@ -77,12 +77,13 @@ public class ClusterMessageService implements MessageService {
         }
         return future;
     }
-
+    // 将消息发送到 RetryTopic: %RETRY%consumerGroup 或者 DLQTopic : %DLQ%consumerGroup
+    // 一个 consumerGroup 对应一个死信队列 DLQTopic : %DLQ%consumerGroup
     @Override
     public CompletableFuture<RemotingCommand> sendMessageBack(ProxyContext ctx, ReceiptHandle handle, String messageId,
         ConsumerSendMsgBackRequestHeader requestHeader, long timeoutMillis) {
         return this.mqClientAPIFactory.getClient().sendMessageBackAsync(
-            this.resolveBrokerAddrInReceiptHandle(ctx, handle),
+            this.resolveBrokerAddrInReceiptHandle(ctx, handle), // handle 中 brokerName 对应的 master 地址
             requestHeader,
             timeoutMillis
         );
@@ -133,7 +134,7 @@ public class ClusterMessageService implements MessageService {
     public CompletableFuture<AckResult> ackMessage(ProxyContext ctx, ReceiptHandle handle, String messageId,
         AckMessageRequestHeader requestHeader, long timeoutMillis) {
         return this.mqClientAPIFactory.getClient().ackMessageAsync(
-            this.resolveBrokerAddrInReceiptHandle(ctx, handle),
+            this.resolveBrokerAddrInReceiptHandle(ctx, handle), // 获取 handle 中指定的副本集 master 地址
             requestHeader,
             timeoutMillis
         );

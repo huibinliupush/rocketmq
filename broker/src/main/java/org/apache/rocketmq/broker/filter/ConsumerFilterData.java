@@ -35,6 +35,7 @@ public class ConsumerFilterData {
     private String topic;
     private String expression;
     private String expressionType;
+    // SQL92 : SqlFilter complie 出来的 Expression
     private transient Expression compiledExpression;
     private long bornTime;
     private long deadTime = 0;

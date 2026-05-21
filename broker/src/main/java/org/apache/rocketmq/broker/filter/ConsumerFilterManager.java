@@ -40,6 +40,7 @@ import org.apache.rocketmq.remoting.protocol.heartbeat.SubscriptionData;
 /**
  * Consumer filter data manager.Just manage the consumers use expression filter.
  */
+// 每隔 10s 持久化
 public class ConsumerFilterManager extends ConfigManager {
 
     private static final Logger log = LoggerFactory.getLogger(LoggerName.FILTER_LOGGER_NAME);
@@ -60,8 +61,8 @@ public class ConsumerFilterManager extends ConfigManager {
     public ConsumerFilterManager(BrokerController brokerController) {
         this.brokerController = brokerController;
         this.bloomFilter = BloomFilter.createByFn(
-            brokerController.getBrokerConfig().getMaxErrorRateOfBloomFilter(),
-            brokerController.getBrokerConfig().getExpectConsumerNumUseFilter()
+            brokerController.getBrokerConfig().getMaxErrorRateOfBloomFilter(), // 20
+            brokerController.getBrokerConfig().getExpectConsumerNumUseFilter() // 32
         );
         // then set bit map length of store config.
         brokerController.getMessageStoreConfig().setBitMapLengthConsumeQueueExt(
@@ -91,7 +92,7 @@ public class ConsumerFilterManager extends ConfigManager {
         consumerFilterData.setClientVersion(clientVersion);
         try {
             consumerFilterData.setCompiledExpression(
-                FilterFactory.INSTANCE.get(type).compile(expression)
+                FilterFactory.INSTANCE.get(type).compile(expression) // SqlFilter
             );
         } catch (Throwable e) {
             log.error("parse error: expr={}, topic={}, group={}, error={}", expression, topic, consumerGroup, e.getMessage());

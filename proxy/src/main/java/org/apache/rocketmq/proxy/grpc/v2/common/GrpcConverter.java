@@ -111,6 +111,7 @@ public class GrpcConverter {
 
         for (Map.Entry<String, String> property : properties.entrySet()) {
             if (!MessageConst.STRING_HASH_SET.contains(property.getKey())) {
+                // 提取不在 STRING_HASH_SET 集合中的属性
                 userAttributes.put(property.getKey(), property.getValue());
             }
         }

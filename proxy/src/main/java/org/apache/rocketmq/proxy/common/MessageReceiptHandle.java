@@ -26,6 +26,7 @@ public class MessageReceiptHandle {
     private final String group;
     private final String topic;
     private final int queueId;
+    // storehost + commitlogOffset
     private final String messageId;
     private final long queueOffset;
     private final String originalReceiptHandleStr;
@@ -35,16 +36,19 @@ public class MessageReceiptHandle {
     private final AtomicInteger renewRetryTimes = new AtomicInteger(0);
     private final AtomicInteger renewTimes = new AtomicInteger(0);
     private final long consumeTimestamp;
+    // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
     private volatile String receiptHandleStr;
 
     public MessageReceiptHandle(String group, String topic, int queueId, String receiptHandleStr, String messageId,
         long queueOffset, int reconsumeTimes) {
+        // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
         this.originalReceiptHandle = ReceiptHandle.decode(receiptHandleStr);
         this.group = group;
         this.topic = topic;
         this.queueId = queueId;
         this.receiptHandleStr = receiptHandleStr;
         this.originalReceiptHandleStr = receiptHandleStr;
+        // storehost + commitlogOffset
         this.messageId = messageId;
         this.queueOffset = queueOffset;
         this.reconsumeTimes = reconsumeTimes;

@@ -49,7 +49,7 @@ public class ForwardMessageToDLQActivity extends AbstractMessingActivity {
                 handleString = messageReceiptHandle.getReceiptHandleStr();
             }
             ReceiptHandle receiptHandle = ReceiptHandle.decode(handleString);
-
+            // 一个 consumerGroup 对应一个死信队列 DLQTopic : %DLQ%consumerGroup
             return this.messagingProcessor.forwardMessageToDeadLetterQueue(
                 ctx,
                 receiptHandle,

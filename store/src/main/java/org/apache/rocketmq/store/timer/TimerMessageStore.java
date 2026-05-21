@@ -79,7 +79,7 @@ public class TimerMessageStore {
 
     public static final int INITIAL = 0, RUNNING = 1, HAULT = 2, SHUTDOWN = 3;
     private volatile int state = INITIAL;
-
+    // rmq_sys_wheel_timer 只有一个队列
     public static final String TIMER_TOPIC = TopicValidator.SYSTEM_TOPIC_PREFIX + "wheel_timer";
     public static final String TIMER_OUT_MS = MessageConst.PROPERTY_TIMER_OUT_MS;
     public static final String TIMER_ENQUEUE_MS = MessageConst.PROPERTY_TIMER_ENQUEUE_MS;
@@ -104,12 +104,13 @@ public class TimerMessageStore {
     protected static final String ENQUEUE_PUT = "enqueue_put";
     protected static final String DEQUEUE_PUT = "dequeue_put";
     protected final PerfCounter.Ticks perfCounterTicks = new PerfCounter.Ticks(LOGGER);
-
+    // DEFAULT_CAPACITY = 1024
     protected final BlockingQueue<TimerRequest> enqueuePutQueue;
     protected final BlockingQueue<List<TimerRequest>> dequeueGetQueue;
     protected final BlockingQueue<TimerRequest> dequeuePutQueue;
 
     private final ByteBuffer timerLogBuffer = ByteBuffer.allocate(4 * 1024);
+    // 4M + 100
     private final ThreadLocal<ByteBuffer> bufferLocal;
     private final ScheduledExecutorService scheduler;
 
@@ -139,10 +140,15 @@ public class TimerMessageStore {
     private long lastEnqueueButExpiredStoreTime;
 
     private final int commitLogFileSize;
+    // 100M
     private final int timerLogFileSize;
     private final int timerRollWindowSlots;
+    // The total days in the timer wheel when precision is 1000ms.
+    // If the broker shutdown last more than the configured days, will cause message loss
+    // 7天
+    // 一秒(延时精度)一个 slot
     private final int slotsTotal;
-
+    // timerPrecisionMs = 1000
     protected final int precisionMs;
     protected final MessageStoreConfig storeConfig;
     protected TimerMetrics timerMetrics;
@@ -157,6 +163,7 @@ public class TimerMessageStore {
     // True if current store is master or current brokerId is equal to the minimum brokerId of the replica group in slaveActingMaster mode.
     protected volatile boolean shouldRunningDequeue;
     private final BrokerStatsManager brokerStatsManager;
+    // escapeBridge.putMessage(msg)
     private Function<MessageExtBrokerInner, PutMessageResult> escapeBridgeHook;
 
     public TimerMessageStore(final MessageStore messageStore, final MessageStoreConfig storeConfig,
@@ -166,13 +173,20 @@ public class TimerMessageStore {
         this.messageStore = messageStore;
         this.storeConfig = storeConfig;
         this.commitLogFileSize = storeConfig.getMappedFileSizeCommitLog();
+        // 100M
         this.timerLogFileSize = storeConfig.getMappedFileSizeTimerLog();
+        // timerPrecisionMs = 1000
         this.precisionMs = storeConfig.getTimerPrecisionMs();
 
         // TimerWheel contains the fixed number of slots regardless of precision.
+        // The total days in the timer wheel when precision is 1000ms.
+        // If the broker shutdown last more than the configured days, will cause message loss
+        // 7天
+        // 一秒(延时精度)一个 slot
         this.slotsTotal = TIMER_WHEEL_TTL_DAY * DAY_SECS;
         this.timerWheel = new TimerWheel(
             getTimerWheelPath(storeConfig.getStorePathRootDir()), this.slotsTotal, precisionMs);
+        // user.home/stpre/commitlog/timerlog  100M
         this.timerLog = new TimerLog(getTimerLogPath(storeConfig.getStorePathRootDir()), timerLogFileSize);
         this.timerMetrics = timerMetrics;
         this.timerCheckpoint = timerCheckpoint;
@@ -188,25 +202,28 @@ public class TimerMessageStore {
         }
 
         // timerRollWindow contains the fixed number of slots regardless of precision.
+        // timerRollWindowSlot = 3600 * 24 * 2  (2天)
         if (storeConfig.getTimerRollWindowSlot() > slotsTotal - TIMER_BLANK_SLOTS
             || storeConfig.getTimerRollWindowSlot() < 2) {
             this.timerRollWindowSlots = slotsTotal - TIMER_BLANK_SLOTS;
         } else {
             this.timerRollWindowSlots = storeConfig.getTimerRollWindowSlot();
         }
-
+        // 4M + 100
         bufferLocal = new ThreadLocal<ByteBuffer>() {
             @Override
             protected ByteBuffer initialValue() {
+                // maxMessageSize = 4M (message body）
                 return ByteBuffer.allocateDirect(storeConfig.getMaxMessageSize() + 100);
             }
         };
-
+        // false
         if (storeConfig.isTimerEnableDisruptor()) {
             enqueuePutQueue = new DisruptorBlockingQueue<>(DEFAULT_CAPACITY);
             dequeueGetQueue = new DisruptorBlockingQueue<>(DEFAULT_CAPACITY);
             dequeuePutQueue = new DisruptorBlockingQueue<>(DEFAULT_CAPACITY);
         } else {
+            // DEFAULT_CAPACITY = 1024
             enqueuePutQueue = new LinkedBlockingDeque<>(DEFAULT_CAPACITY);
             dequeueGetQueue = new LinkedBlockingDeque<>(DEFAULT_CAPACITY);
             dequeuePutQueue = new LinkedBlockingDeque<>(DEFAULT_CAPACITY);

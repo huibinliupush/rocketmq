@@ -30,12 +30,14 @@ public class DataConverter {
 
     public static int setBit(int value, int index, boolean flag) {
         if (flag) {
+            // 第 index 位设置为 1
             return (int) (value | (1L << index));
         } else {
+            // 第 index 位设置为 0
             return (int) (value & ~(1L << index));
         }
     }
-
+    // 检查第 index 位 是否为 1
     public static boolean getBit(int value, int index) {
         return (value & (1L << index)) != 0;
     }

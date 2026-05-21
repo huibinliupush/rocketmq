@@ -33,11 +33,14 @@ public class ReceiptHandle {
     private final long invisibleTime;
     private final long nextVisibleTime;
     private final int reviveQueueId;
+    // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
     private final String topicType;
     private final String brokerName;
     private final int queueId;
+    // msgQueueOffset
     private final long offset;
     private final long commitLogOffset;
+    // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
     private final String receiptHandle;
 
     public String encode() {
@@ -49,7 +52,7 @@ public class ReceiptHandle {
     public boolean isExpired() {
         return nextVisibleTime <= System.currentTimeMillis();
     }
-
+    // receiptHandle：startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
     public static ReceiptHandle decode(String receiptHandle) {
         List<String> dataList = Arrays.asList(receiptHandle.split(SEPARATOR));
         if (dataList.size() < 8) {
@@ -62,6 +65,7 @@ public class ReceiptHandle {
         String topicType = dataList.get(4);
         String brokerName = dataList.get(5);
         int queueId = Integer.parseInt(dataList.get(6));
+        // msgQueueOffset
         long offset = Long.parseLong(dataList.get(7));
         long commitLogOffset = -1L;
         if (dataList.size() >= 9) {
@@ -99,14 +103,18 @@ public class ReceiptHandle {
 
     public static class ReceiptHandleBuilder {
         private long startOffset;
+        // popTime
         private long retrieveTime;
         private long invisibleTime;
         private int reviveQueueId;
+        // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
         private String topicType;
         private String brokerName;
         private int queueId;
+        // msgQueueOffset
         private long offset;
         private long commitLogOffset;
+        // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
         private String receiptHandle;
 
         ReceiptHandleBuilder() {

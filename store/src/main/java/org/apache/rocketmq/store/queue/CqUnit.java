@@ -22,8 +22,10 @@ import org.apache.rocketmq.store.ConsumeQueueExt;
 import java.nio.ByteBuffer;
 
 public class CqUnit {
+    // 消息索引在 consume queue 中的 index (全局)
     private final long queueOffset;
     private final int size;
+    // message 在 commitlog 中的 offset
     private final long pos;
     private final short batchNum;
     /**
@@ -41,9 +43,13 @@ public class CqUnit {
     }
 
     public CqUnit(long queueOffset, long pos, int size, long tagsCode, short batchNum, int compactedOffset, ByteBuffer buffer) {
+        // 全局 index
         this.queueOffset = queueOffset;
+        // commit log 中的 offset
         this.pos = pos;
+        // message size
         this.size = size;
+        // message tag hashcode
         this.tagsCode = tagsCode;
         this.batchNum = batchNum;
 
