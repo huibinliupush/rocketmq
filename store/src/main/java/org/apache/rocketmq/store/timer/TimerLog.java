@@ -29,6 +29,8 @@ public class TimerLog {
     private static Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     public final static int BLANK_MAGIC_CODE = 0xBBCCDDEE ^ 1880681586 + 8;
     private final static int MIN_BLANK_LEN = 4 + 8 + 4;
+    // 52
+    // timerlog 中的 unit 同 consumerqueue 一样都是固定长度的
     public final static int UNIT_SIZE = 4  //size
             + 8 //prev pos
             + 4 //magic value
@@ -48,6 +50,7 @@ public class TimerLog {
     public TimerLog(final String storePath, final int fileSize) {
         // 100M
         this.fileSize = fileSize;
+        // user.home/stpre/timerlog
         this.mappedFileQueue = new MappedFileQueue(storePath, fileSize, null);
     }
 
@@ -68,24 +71,32 @@ public class TimerLog {
             log.error("Create mapped file1 error for timer log");
             return -1;
         }
+        // 如果 timerlog 剩余的空间无法村存储 len + MIN_BLANK_LEN
+        // 至少要留有 MIN_BLANK_LEN 的空白空间存储 end 标识
         if (len + MIN_BLANK_LEN > mappedFile.getFileSize() - mappedFile.getWrotePosition()) {
             ByteBuffer byteBuffer = ByteBuffer.allocate(MIN_BLANK_LEN);
+            // timerlog 剩余空间，这样的序列方式目的是为了和从 commitlog 读取消息的序列方式保持一致
+            // 先读 size,再读 magic
             byteBuffer.putInt(mappedFile.getFileSize() - mappedFile.getWrotePosition());
             byteBuffer.putLong(0);
             byteBuffer.putInt(BLANK_MAGIC_CODE);
+            // timerlog 末尾插入 end 标识
             if (mappedFile.appendMessage(byteBuffer.array())) {
                 //need to set the wrote position
+                // 文件以写满
                 mappedFile.setWrotePosition(mappedFile.getFileSize());
             } else {
                 log.error("Append blank error for timer log");
                 return -1;
             }
+            // 创建新的 mappedFIle
             mappedFile = this.mappedFileQueue.getLastMappedFile(0);
             if (null == mappedFile) {
                 log.error("create mapped file2 error for timer log");
                 return -1;
             }
         }
+        // timerlog 写入位置
         long currPosition = mappedFile.getFileFromOffset() + mappedFile.getWrotePosition();
         if (!mappedFile.appendMessage(data, pos, len)) {
             log.error("Append error for timer log");
@@ -105,6 +116,7 @@ public class TimerLog {
         MappedFile mappedFile = mappedFileQueue.findMappedFileByOffset(offsetPy);
         if (null == mappedFile)
             return null;
+        // 获取 offsetPy 所在 mappedFile，范围为 offsetPy 到 writePosition
         return mappedFile.selectMappedBuffer(0);
     }
 
@@ -121,7 +133,10 @@ public class TimerLog {
     // if the format of timerlog changed, this offset has to be changed too
     // so does the batch writing
     public int getOffsetForLastUnit() {
-
+        // fileSize 向下对齐到 UNIT_SIZE 的整数倍 - MIN_BLANK_LEN - UNIT_SIZE
+        // 保证有效数据区的长度 (fileSize - MIN_BLANK_LEN) 是 UNIT_SIZE 的整数倍。
+        // 计算出最后一个 unit 的 offset
+        // 例如： 18 % 5 = 3 ， 18 - 3 = 15 正好是 5 的整数倍
         return fileSize - (fileSize - MIN_BLANK_LEN) % UNIT_SIZE - MIN_BLANK_LEN - UNIT_SIZE;
     }
 

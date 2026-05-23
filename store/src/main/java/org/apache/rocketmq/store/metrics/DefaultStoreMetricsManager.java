@@ -82,7 +82,8 @@ public class DefaultStoreMetricsManager {
     public static LongCounter timerDequeueTotal = new NopLongCounter();
     public static LongCounter timerEnqueueTotal = new NopLongCounter();
     public static ObservableLongGauge timerMessageSnapshot = new NopObservableLongGauge();
-    public static LongHistogram timerMessageSetLatency = new NopLongHistogram();
+    // 延时时间分布直方图
+    public static LongHistogram timerMessageSetLatency = new NopLongHistogram(); // 空方法
 
     public static List<Pair<InstrumentSelector, ViewBuilder>> getMetricsView() {
         List<Double> rpcCostTimeBuckets = Arrays.asList(

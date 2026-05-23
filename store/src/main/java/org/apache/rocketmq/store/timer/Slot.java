@@ -26,16 +26,24 @@ package org.apache.rocketmq.store.timer;
  */
 public class Slot {
     public static final short SIZE = 32;
+    // slot 中所有延时消息的 delayed_time
     public final long timeMs; //delayed time
+    // slot 对应在 timerlog 中的第一个延时消息
     public final long firstPos;
+    // slot 对应在 timerlog 中的最后一个延时消息
     public final long lastPos;
+    // slot 中的延时消息个数
     public final int num;
     public final int magic; //no use now, just keep it
 
     public Slot(long timeMs, long firstPos, long lastPos) {
+        // slot 中所有延时消息的 delayed_time
         this.timeMs = timeMs;
+        // slot 对应在 timerlog 中的第一个延时消息
         this.firstPos = firstPos;
+        // slot 对应在 timerlog 中的最后一个延时消息
         this.lastPos = lastPos;
+        // slot 中的延时消息个数
         this.num = 0;
         this.magic = 0;
     }

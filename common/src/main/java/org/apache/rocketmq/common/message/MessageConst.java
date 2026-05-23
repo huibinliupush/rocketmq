@@ -120,6 +120,7 @@ public class MessageConst {
     public static final String PROPERTY_TIMER_ROLL_TIMES = "TIMER_ROLL_TIMES";
     // 延时消息投递时间戳
     public static final String PROPERTY_TIMER_OUT_MS = "TIMER_OUT_MS";
+    // 取消延时消息的消息需要设置 ： 被取消消息的 realTopic + UNIQKEY
     public static final String PROPERTY_TIMER_DEL_UNIQKEY = "TIMER_DEL_UNIQKEY";
     // 传统 DelayLevel 调度延时消息
     public static final String PROPERTY_TIMER_DELAY_LEVEL = "TIMER_DELAY_LEVEL";

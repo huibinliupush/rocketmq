@@ -42,6 +42,7 @@ public class MappedFileQueue implements Swappable {
     private static final Logger LOG_ERROR = LoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
     // user.home/stpre/commitlog
     // user.home/store/consumequeue/topic/queueId
+    // user.home/stpre/timerlog
     protected final String storePath;
 
     protected final int mappedFileSize;
@@ -61,7 +62,7 @@ public class MappedFileQueue implements Swappable {
         AllocateMappedFileService allocateMappedFileService) {
         // user.home/stpre/commitlog
         // user.home/store/consumequeue/topic/queueId
-        // user.home/stpre/commitlog/timerlog
+        // user.home/stpre/timerlog
         this.storePath = storePath;
         this.mappedFileSize = mappedFileSize;
         // consume queue 这里为 null 因为是后台 reput 线程构建所以不需要异步创建，不用考虑文件的创建对实时性的影响
@@ -254,6 +255,7 @@ public class MappedFileQueue implements Swappable {
     public boolean load() {
         // user.home/stpre/commitlog
         // storePath/consumerqueues/topic/queueid
+        // user.home/stpre/timerlog
         File dir = new File(this.storePath);
         File[] ls = dir.listFiles();
         if (ls != null) {
@@ -633,8 +635,14 @@ public class MappedFileQueue implements Swappable {
 
         return deleteCount;
     }
-
+    // offset : commitlog 最小 offsetPy
+    // checkOffset: timer log 最后一个 unit 的 offset
+    // TimerLog.UNIT_SIZE
+    // 挨个遍历 timer log 的 mappedFile
+    // 如果timerlog mappedFile中最后一个延时消息的 offsetPy 小于 commitlog 最小 offsetPy
+    // 说明整个 timerlog mappedFile 过期，需要清理
     public int deleteExpiredFileByOffsetForTimerLog(long offset, int checkOffset, int unitSize) {
+        // 获取 timer log 的所有 mappedFiles
         Object[] mfs = this.copyMappedFiles(0);
 
         List<MappedFile> files = new ArrayList<>();
@@ -645,7 +653,9 @@ public class MappedFileQueue implements Swappable {
 
             for (int i = 0; i < mfsLength; i++) {
                 boolean destroy = false;
+                // 挨个遍历 timer log 的 mappedFile
                 MappedFile mappedFile = (MappedFile) mfs[i];
+                // 获取该 mappedFile 中最后一个 unit
                 SelectMappedBufferResult result = mappedFile.selectMappedBuffer(checkOffset);
                 try {
                     if (result != null) {
@@ -655,6 +665,8 @@ public class MappedFileQueue implements Swappable {
                         int magic = result.getByteBuffer().getInt();
                         if (size == unitSize && (magic | 0xF) == 0xF) {
                             result.getByteBuffer().position(position + MixAll.UNIT_PRE_SIZE_FOR_MSG);
+                            // timerlog 中最后一个延时消息的 offsetPy 小于 commitlog 最小 offsetPy
+                            // 说明整个 timerlog mappedFile 过期，需要清理
                             long maxOffsetPy = result.getByteBuffer().getLong();
                             destroy = maxOffsetPy < offset;
                             if (destroy) {
@@ -677,7 +689,7 @@ public class MappedFileQueue implements Swappable {
                         result.release();
                     }
                 }
-
+                // 销毁 timerlog mappedFile
                 if (destroy && mappedFile.destroy(1000 * 60)) {
                     files.add(mappedFile);
                     deleteCount++;

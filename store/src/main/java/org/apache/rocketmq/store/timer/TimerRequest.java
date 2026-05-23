@@ -22,25 +22,31 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 
 public class TimerRequest {
-
+    // 延时消息在 commitlog 中的 offset
     private final long offsetPy;
+    // 延时消息大小
     private final int sizePy;
     private final long delayTime;
-
+    // MAGIC_DEFAULT（初始创建时）
     private final int magic;
-
+    // 进入 enqueuePutQueue 的时间戳
     private long enqueueTime;
+    // commitlog 中存储的消息实体
     private MessageExt msg;
 
 
     //optional would be a good choice, but it relies on JDK 8
+    // 等待被写入 TimerWheel
+    // 在 putMessageToTimerWheel 之前被设置
+    // CountDownLatch deleteLatch (delete msg 个数) 在 dequeue 的时候被设置
     private CountDownLatch latch;
 
     private boolean released;
 
     //whether the operation is successful
     private boolean succ;
-
+    // 一个空的 ConcurrentSkipListSet，由 deQueue 方法设置
+    // TimerDequeueGetMessageService 会设置要取消延时消息的 UNIQKEY（PROPERTY_TIMER_DEL_UNIQKEY）
     private Set<String> deleteList;
 
     public TimerRequest(long offsetPy, int sizePy, long delayTime, long enqueueTime, int magic) {
@@ -48,11 +54,17 @@ public class TimerRequest {
     }
 
     public TimerRequest(long offsetPy, int sizePy, long delayTime, long enqueueTime, int magic, MessageExt msg) {
+        // 延时消息在 commitlog 中的 offset
         this.offsetPy = offsetPy;
+        // 延时消息大小
         this.sizePy = sizePy;
+        // 延时消息的 delayTime
         this.delayTime = delayTime;
+        // 进入 enqueuePutQueue 的时间戳
         this.enqueueTime = enqueueTime;
+        // MAGIC_DEFAULT
         this.magic = magic;
+        // commitlog 中存储的消息实体
         this.msg = msg;
     }
 
@@ -101,7 +113,7 @@ public class TimerRequest {
     public void idempotentRelease() {
         idempotentRelease(true);
     }
-
+    // 将延时消息投递到 real topic 之后 release
     public void idempotentRelease(boolean succ) {
         this.succ = succ;
         if (!released && latch != null) {

@@ -285,6 +285,7 @@ public class BrokerController {
     // BrokerIP1 : listenPort
     private InetSocketAddress storeHost;
     private TimerMessageStore timerMessageStore;
+    // user.home/store/config/timercheck
     private TimerCheckpoint timerCheckpoint;
     protected BrokerFastFailure brokerFastFailure;
     private Configuration configuration;
@@ -809,7 +810,9 @@ public class BrokerController {
     }
 
     protected void initializeScheduledTasks() {
-
+        // 定时持久化 consume offset
+        // 每隔 5s 持久化 consumerOffset
+        // 每隔 10s 持久化 consumerOrderInfo
         initializeBrokerScheduledTasks();
 
         if (this.brokerConfig.getNamesrvAddr() != null) {
@@ -905,6 +908,7 @@ public class BrokerController {
             if (messageStoreConfig.isTimerWheelEnable()) {
                 // user.home/store/config/timercheck
                 this.timerCheckpoint = new TimerCheckpoint(BrokerPathConfigHelper.getTimerCheckPath(messageStoreConfig.getStorePathRootDir()));
+                // user.home/store/config/timermetrics
                 TimerMetrics timerMetrics = new TimerMetrics(BrokerPathConfigHelper.getTimerMetricsPath(messageStoreConfig.getStorePathRootDir()));
                 this.timerMessageStore = new TimerMessageStore(messageStore, messageStoreConfig, timerCheckpoint, timerMetrics, brokerStatsManager);
                 this.timerMessageStore.registerEscapeBridgeHook(msg -> escapeBridge.putMessage(msg));
@@ -951,7 +955,7 @@ public class BrokerController {
         }
 
         if (messageStoreConfig.isTimerWheelEnable()) {
-            // 5.0 基于时间轮的延时消息调度方案
+            // 5.0 基于时间轮的延时消息调度方案，recover timer log ， timerWheel
             result = result && this.timerMessageStore.load();
         }
 

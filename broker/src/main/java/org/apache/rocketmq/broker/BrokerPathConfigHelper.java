@@ -58,6 +58,7 @@ public class BrokerPathConfigHelper {
     public static String getTimerCheckPath(final String rootDir) {
         return getConfigDir(rootDir) + "timercheck";
     }
+    // user.home/store/config/timermetrics
     public static String getTimerMetricsPath(final String rootDir) {
         return getConfigDir(rootDir) + "timermetrics";
     }

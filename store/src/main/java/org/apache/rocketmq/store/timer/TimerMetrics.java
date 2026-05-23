@@ -69,7 +69,7 @@ public class TimerMetrics extends ConfigManager {
             add(86400); // 8h, 24h
         }};
     private final DataVersion dataVersion = new DataVersion();
-
+    // user.home/store/config/timermetrics
     private final String configPath;
 
     public TimerMetrics(String configPath) {

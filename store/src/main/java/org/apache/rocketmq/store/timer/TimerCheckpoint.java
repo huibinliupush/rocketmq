@@ -36,9 +36,15 @@ public class TimerCheckpoint {
     private final RandomAccessFile randomAccessFile;
     private final FileChannel fileChannel;
     private final MappedByteBuffer mappedByteBuffer;
+    // commitReadTimeMs, 最近一次 timer wheel 指针
     private volatile long lastReadTimeMs = 0; //if it is slave, need to read from master
+    // timer log 全局 flushwhere
     private volatile long lastTimerLogFlushPos = 0;
+    // min(commitQueueOffset, timerCheckpoint.getMasterTimerQueueOffset()
     private volatile long lastTimerQueueOffset = 0;
+    // TIMER_TOPIC queue 的 commitQueueOffset
+    // 当 enqueuePutQueue 中没有数据可拉取，用 currQueueOffset 赋值
+    // 最后一个写入 timerlog 的延时消息对应在 TIMER_TOPIC queue 中的 queueOffset
     private volatile long masterTimerQueueOffset = 0; // read from master
     private final DataVersion dataVersion = new DataVersion();
 
@@ -56,6 +62,7 @@ public class TimerCheckpoint {
 
         this.randomAccessFile = new RandomAccessFile(file, "rw");
         this.fileChannel = this.randomAccessFile.getChannel();
+        // 4K
         this.mappedByteBuffer = fileChannel.map(MapMode.READ_WRITE, 0, DefaultMappedFile.OS_PAGE_SIZE);
 
         if (fileExists) {
@@ -105,9 +112,15 @@ public class TimerCheckpoint {
         if (null == this.mappedByteBuffer) {
             return;
         }
+        // commitReadTimeMs, 最近一次 timer wheel 指针
         this.mappedByteBuffer.putLong(0, this.lastReadTimeMs);
+        // timer log 全局 flushwhere
         this.mappedByteBuffer.putLong(8, this.lastTimerLogFlushPos);
+        // min(commitQueueOffset, timerCheckpoint.getMasterTimerQueueOffset()
         this.mappedByteBuffer.putLong(16, this.lastTimerQueueOffset);
+        // TIMER_TOPIC queue 的 commitQueueOffset
+        // 当 enqueuePutQueue 中没有数据可拉取，用 currQueueOffset 赋值
+        // 最后一个写入 timerlog 的延时消息对应在 TIMER_TOPIC queue 中的 queueOffset
         this.mappedByteBuffer.putLong(24, this.masterTimerQueueOffset);
         // new add to record dataVersion
         this.mappedByteBuffer.putLong(32, this.dataVersion.getStateVersion());

@@ -543,7 +543,9 @@ public class DefaultMappedFile extends AbstractMappedFile {
         if ((pos + size) <= readPosition) {
             if (this.hold()) {
                 this.mappedByteBufferAccessCountSinceLastSwap++;
-
+                // 这里使用 slice 也是可以的，因为在每次读写 mappedByteBuffer 之前都会 slice
+                // 然后针对 slice 出来的 buffer 进行读写，也就是说 mappedByteBuffer 中的 position 从创建出来之后
+                // 就没有变过
                 ByteBuffer byteBuffer = this.mappedByteBuffer.slice();
                 byteBuffer.position(pos);
                 ByteBuffer byteBufferNew = byteBuffer.slice();
