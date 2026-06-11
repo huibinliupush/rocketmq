@@ -2569,6 +2569,7 @@ public class CommitLog implements Swappable {
      * */
     public class ColdDataCheckService extends ServiceThread {
         private final SystemClock systemClock = new SystemClock();
+        // 每隔 60s check 一下 cold data
         // key 表示一个 mappedFile , 用它的 FileName 也就是文件起始 offset 表示
         // value 为 byte[] pageCacheRst ，数组中表示对应文件中的每一个内存页是否仍然在内存中。 1 表示在，0 表示不在
         // 但这里的 value 是经过抽样后的 pageCacheTable，每隔 32 个页面记录一下页面驻留情况

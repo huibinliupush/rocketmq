@@ -32,10 +32,10 @@ public class TimerLog {
     // 52
     // timerlog 中的 unit 同 consumerqueue 一样都是固定长度的
     public final static int UNIT_SIZE = 4  //size
-            + 8 //prev pos
+            + 8 //prev pos 对应 slot 的 lastPos
             + 4 //magic value
             + 8 //curr write time, for trace
-            + 4 //delayed time, for check
+            + 4 //delayed time, for check 不是时间戳
             + 8 //offsetPy
             + 4 //sizePy
             + 4 //hash code of real topic

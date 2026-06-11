@@ -213,14 +213,19 @@ public class BrokerConfig extends BrokerIdentity {
     private long broadcastOffsetExpireSecond = 2 * 60;
 
     private long broadcastOffsetExpireMaxSecond = 5 * 60;
-
+    // 单个 queue 的 polling request 个数不能超过 1024
     private int popPollingSize = 1024;
     private int popPollingMapSize = 100000;
     // 20w cost 200M heap memory.
+    // broker 总共可以承载的最大 polling request 个数
     private long maxPopPollingSize = 100000;
     private int reviveQueueNum = 8;
+    // PopReviveService 每隔 reviveInterval 时长，消费 reviveTopic 中的 pop check point
     private long reviveInterval = 1000;
     private long reviveMaxSlow = 3;
+    // popReviveService 会一直的不停的通过 consumeReviveMessage 拉取对应 reviveQueue 中的消息
+    // 直到将 reviveQueue 中的消息拉取完毕在做统一处理，但是也不能一直无限制的拉取，受到 reviveScanTime 的限制
+    // 如果拉取时间超过了 reviveScanTime，就停止拉取
     private long reviveScanTime = 10000;
     private boolean enableSkipLongAwaitingAck = false;
     private long reviveAckWaitMs = TimeUnit.MINUTES.toMillis(3);

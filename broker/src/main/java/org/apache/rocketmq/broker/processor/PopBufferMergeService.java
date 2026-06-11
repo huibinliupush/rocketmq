@@ -49,6 +49,9 @@ public class PopBufferMergeService extends ServiceThread {
     // 1. justOffset = true (默认) 并且 check point 已经写入到 reviveTopic 那么就删除该 checkpoint
     // 2. justOffset = false,checkpoint 中的消息全部 ack, 也删除
     // MergeKey : Topic consumerGroup QueueId StartOffset PopTime BrokerName
+    // broker 所有 pop check point 不区分 consumerGroup ,queue
+    // 如果 pop check point 已经写入 reviveTopic 则从 buffer 删除
+    // 或者 pop check point 全部 ack 从 buffer 删除
     ConcurrentHashMap<String/*mergeKey*/, PopCheckPointWrapper>
         buffer = new ConcurrentHashMap<>(1024 * 16);
     // topic@cid@queueId 对应的所有 pop check point
@@ -232,6 +235,7 @@ public class PopBufferMergeService extends ServiceThread {
             }
         }
     }
+    // 每隔 5ms
     // 将未写入 reviveTopic 的 pop checkpoint 写入
     // 提交已写入 reviveTopic 的 pop checkpoint -> nextBeginOffset
     // 也就是说 popOffset 是一直无脑向前推进的，但是具体 queue 中的 offset 需要等到 pop check point 写入到 reviveTopic 中才可以向前推进
@@ -244,12 +248,16 @@ public class PopBufferMergeService extends ServiceThread {
         AtomicInteger count = new AtomicInteger(0);
         int countCk = 0;
         // MergeKey : Topic consumerGroup QueueId StartOffset PopTime BrokerName
+        // 获取 broker 所有 pop check point 不区分 consumerGroup ,queue
         Iterator<Map.Entry<String, PopCheckPointWrapper>> iterator = buffer.entrySet().iterator();
         while (iterator.hasNext()) {
             Map.Entry<String, PopCheckPointWrapper> entry = iterator.next();
+            // 获取 broker 所有 pop check point 不区分 consumerGroup ,queue
             PopCheckPointWrapper pointWrapper = entry.getValue();
 
             // just process offset(already stored at pull thread), or buffer ck(not stored and ack finish)
+            // 如果 pop check point 已经写入 reviveTopic 则从 buffer 删除
+            // 或者 pop check point 全部 ack 从 buffer 删除
             if (pointWrapper.isJustOffset() && pointWrapper.isCkStored() || isCkDone(pointWrapper)
                 || isCkDoneForFinish(pointWrapper) && pointWrapper.isCkStored()) {
                 if (brokerController.getBrokerConfig().isEnablePopLog()) {
@@ -257,6 +265,7 @@ public class PopBufferMergeService extends ServiceThread {
                 }
                 // 1. justOffset = true (默认) 并且 check point 已经写入到 reviveTopic 那么就删除该 checkpoint
                 // 2. justOffset = false,checkpoint 中的消息全部 ack, 也删除
+                // 从 buffser 中删除
                 iterator.remove();
                 counter.decrementAndGet();
                 continue;
@@ -308,7 +317,7 @@ public class PopBufferMergeService extends ServiceThread {
                 if (!pointWrapper.isCkStored()) {
                     continue;
                 }
-
+                // false
                 if (brokerController.getBrokerConfig().isEnablePopBatchAck()) {
                     List<Byte> indexList = this.batchAckIndexList;
                     try {
@@ -327,11 +336,16 @@ public class PopBufferMergeService extends ServiceThread {
                     }
                 } else {
                     for (byte i = 0; i < point.getNum(); i++) {
+                        // enablePopBufferMerge = false
+                        // true : 则 popCheckPoint 保存在 PopBufferMergeService 中， ack message 的时候直接修改 PopBufferMergeService 中 check point 的 bitsmap
+                        // false： 则 popCheckPoint 写入到 reviveTopic with CK_TAG , ack message 也是写入到 reviveTopic with AK_TAG
                         // reput buffer ak to store
                         // 消息已经 ack 但未写入 reviveTopic with ACK_TAG
                         if (DataConverter.getBit(pointWrapper.getBits().get(), i)
                             && !DataConverter.getBit(pointWrapper.getToStoreBits().get(), i)) {
+                            // 处理 enablePopBufferMerge 的情况
                             // 将对应消息写入 reviveTopic with ACK_TAG
+                            // ack 消息
                             putAckToStore(pointWrapper, i, count);
                         }
                     }
@@ -424,7 +438,7 @@ public class PopBufferMergeService extends ServiceThread {
 
         final PopCheckPoint popCheckPoint = wrapper.getCk();
         final String lockKey = wrapper.getLockKey();
-
+        // commitOffset 的时候也需要对 queue 加锁
         if (!queueLockManager.tryLock(lockKey)) {
             return false;
         }
@@ -492,6 +506,7 @@ public class PopBufferMergeService extends ServiceThread {
         // 添加到 commitOffsets 集合中
         // 集合存储了 topic@cid@queueId 对应的所有 pop check point
         putOffsetQueue(pointWrapper);
+        // broker 中所有 popCheckPoint
         this.buffer.put(pointWrapper.getMergeKey(), pointWrapper);
         this.counter.incrementAndGet();
         if (brokerController.getBrokerConfig().isEnablePopLog()) {
@@ -514,6 +529,7 @@ public class PopBufferMergeService extends ServiceThread {
         ck.setBrokerName(brokerName);
 
         PopCheckPointWrapper pointWrapper = new PopCheckPointWrapper(reviveQueueId, Long.MAX_VALUE, ck, nextBeginOffset, true);
+        // 由 PopBufferMergerService run 直接提交 nextBeginOffset
         pointWrapper.setCkStored(true);
 
         putOffsetQueue(pointWrapper);
@@ -525,6 +541,8 @@ public class PopBufferMergeService extends ServiceThread {
     public boolean addCk(PopCheckPoint point, int reviveQueueId, long reviveQueueOffset, long nextBeginOffset) {
         // key: point.getT() + point.getC() + point.getQ() + point.getSo() + point.getPt()
         // enablePopBufferMerge = false
+        // true : 则 popCheckPoint 保存在 PopBufferMergeService 中， ack message 的时候直接修改 PopBufferMergeService 中 check point 的 bitsmap
+        // false： 则 popCheckPoint 写入到 reviveTopic with CK_TAG , ack message 也是写入到 reviveTopic with AK_TAG
         if (!brokerController.getBrokerConfig().isEnablePopBufferMerge()) {
             return false;
         }
@@ -690,6 +708,7 @@ public class PopBufferMergeService extends ServiceThread {
             return;
         }
         // 不管情况如何反正 check point 已经写入本机 revieTopic 了： FLUSH_DISK_TIMEOUT，FLUSH_SLAVE_TIMEOUT，SLAVE_NOT_AVAILABLE
+        // 当 ckStore 之后，popBufferMergerService run 会提交 ck 的 nextBeginOffset
         pointWrapper.setCkStored(true);
 
         if (putMessageResult.isRemotePut()) {
@@ -861,7 +880,7 @@ public class PopBufferMergeService extends ServiceThread {
         int bits = pointWrapper.getBits().get() ^ pointWrapper.getToStoreBits().get();
         for (byte i = 0; i < num; i++) {
             if (DataConverter.getBit(bits, i)) {
-                // 说明至少有一个消息既没有 ack 也没有写入 reviveTopic with ACK_TAG
+                // 说明至少有一个消息没有 ack 或者没有写入 reviveTopic with ACK_TAG
                 return false;
             }
         }
@@ -897,6 +916,7 @@ public class PopBufferMergeService extends ServiceThread {
         // -1: not stored, >=0: stored, Long.MAX: storing.
         // 当 check point 存储到 reviceTopic 对应的 reviveQueueId 之后
         // 写入 check point 在 reviveQueueId 中的 queueOffset
+        // 0 表示 escaping remotely 。 see:org.apache.rocketmq.broker.processor.PopBufferMergeService.handleCkMessagePutResult
         private volatile long reviveQueueOffset;
         // 本批次 pop 的 check point
         private final PopCheckPoint ck;

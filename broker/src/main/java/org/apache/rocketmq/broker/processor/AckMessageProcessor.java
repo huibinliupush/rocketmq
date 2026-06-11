@@ -58,7 +58,7 @@ public class AckMessageProcessor implements NettyRequestProcessor {
     private final BrokerController brokerController;
     // DEFAULT_CLUSTER_NAME rmq_sys_REVIVE_LOG_
     private final String reviveTopic; // 系统 topic 在 TopicConfigManger init 方法中初始化
-    // 负责消费 reviveTopic , 每一个 ReviveQueue 对应一个 PopReviveService
+    // 负责消费 reviveTopic , 每一个 ReviveQueue(8个) 对应一个 PopReviveService
     // 但只有 master 节点上才会 run PopReviveService
     private final PopReviveService[] popReviveServices;
 
@@ -226,7 +226,8 @@ public class AckMessageProcessor implements NettyRequestProcessor {
             ackOffset = requestHeader.getOffset();
             popTime = ExtraInfoUtil.getPopTime(extraInfo);
             invisibleTime = ExtraInfoUtil.getInvisibleTime(extraInfo);
-            // FIFO 消息在 reviveTopic 中只有一个队列 POP_ORDER_REVIVE_QUEUE
+            // FIFO 消息不会用到 reviveTopic
+            // 这里指定 rqId 为 POP_ORDER_REVIVE_QUEUE 只是做一个 FIFO 标识，事实上根本不存在这样一个队列
             if (rqId == KeyBuilder.POP_ORDER_REVIVE_QUEUE) {
                 ackOrderly(topic, consumeGroup, qId, ackOffset, popTime, invisibleTime, channel, response);
                 return;
@@ -326,7 +327,7 @@ public class AckMessageProcessor implements NettyRequestProcessor {
                 return null;
             });
         } else {
-            // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG
+            // 向 reviveTopic 发送 ack 消息， tag 为 ACK_TAG，延时时间为：popTime + invisibleTime
             PutMessageResult putMessageResult = this.brokerController.getEscapeBridge().putMessageToSpecificQueue(msgInner);
             handlePutMessageResult(putMessageResult, ackMsg, topic, consumeGroup, popTime, qId, ackCount);
         }
@@ -448,7 +449,7 @@ public class AckMessageProcessor implements NettyRequestProcessor {
                         channel.remoteAddress().toString(), consumeGroup, topic, qId, nextOffset);
                 }
                 if (!this.brokerController.getConsumerOrderInfoManager().checkBlock(null, topic, consumeGroup, qId, invisibleTime)) {
-                    // 如果消息全部 ack 或者所有消息的 invisibleTime 达到，则通知 messageArrving
+                    // 如果消息全部 ack 或者第一个未ack消息的 invisibleTime 达到，则通知 messageArrving
                     this.brokerController.getPopMessageProcessor().notifyMessageArriving(topic, qId, consumeGroup);
                 }
             } else if (nextOffset == -1) {

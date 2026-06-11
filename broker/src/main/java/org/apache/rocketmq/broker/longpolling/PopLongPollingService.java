@@ -53,9 +53,10 @@ public class PopLongPollingService extends ServiceThread {
     private final BrokerController brokerController;
     // PopMessageProcessor
     private final NettyRequestProcessor processor;
-    // topic -> cid（consumerGroup） -> queueId
+    // topic -> cid（consumerGroup） -> Byte.MIN_VALUE
     // queueId = -1 表示读取所有消费队列
     // 主要用来分辨 topic 下有多少 consumerGroup ，pop模式下消费者可以消费所有队列，所以这里的 queueId 都是 -1
+    // polling 的时候填充
     private final ConcurrentLinkedHashMap<String, ConcurrentHashMap<String, Byte>> topicCidMap;
     // key : topic@cid（consumerGroup）@queueId ， value 不能超过 1024 popPollingSize
     // pop 模式下 queueId = -1 ，表示consumerGroup下的消费者可以消费所有队列
@@ -156,6 +157,8 @@ public class PopLongPollingService extends ServiceThread {
                         if (!first.isTimeout()) {
                             // PopRequest 没有 time out 则不执行，跳出执行 do while 循环,继续处理下一个 queue 上的 pop request
                             if (popQ.add(first)) {
+                                // PopRequest 在 ConcurrentSkipListSet 中是按照过期时间排好序的
+                                // 只要第一个没过期，后面的就不用看了
                                 break;
                             } else {
                                 POP_LOGGER.info("polling, add fail again: {}", first);
@@ -274,7 +277,7 @@ public class PopLongPollingService extends ServiceThread {
         if (remotingCommands == null || remotingCommands.isEmpty()) {
             return false;
         }
-        // 取出一个 PopRequest，前提是 popRequest.getChannel().isActive
+        // 取出第一个 PopRequest，前提是 popRequest.getChannel().isActive
         // 消息到来，只会通知 consumeGroup 下的一个消费者 PopRequest(不是所有)
         // 第二个消息到来，继续通知下一个消费者 PopRequest
         // 这样 consumeGroup 下的所有消费者就能均匀的平摊所有队列中的消息了
@@ -326,7 +329,7 @@ public class PopLongPollingService extends ServiceThread {
         if (!request.getCtx().channel().isActive()) {
             return false;
         }
-
+        // 异步重新触发 pop 逻辑，防止阻塞 notify 线程
         Runnable run = () -> {
             try {
                 final RemotingCommand response = processor.processRequest(request.getCtx(), request.getRemotingCommand());
@@ -345,7 +348,7 @@ public class PopLongPollingService extends ServiceThread {
                 POP_LOGGER.error("ExecuteRequestWhenWakeup run", e1);
             }
         };
-
+        // 16 + PROCESSOR_NUMBER * 2 , 10万队列
         this.brokerController.getPullMessageExecutor().submit(
             new RequestTask(run, request.getChannel(), request.getRemotingCommand()));
         return true;
@@ -380,6 +383,7 @@ public class PopLongPollingService extends ServiceThread {
         long expired = requestHeader.getBornTime() + requestHeader.getPollTime();
         final PopRequest request = new PopRequest(remotingCommand, ctx, expired, subscriptionData, messageFilter);
         // maxPopPollingSize = 100000
+        // broker 总共可以承载的最大 polling request 个数
         boolean isFull = totalPollingNum.get() >= this.brokerController.getBrokerConfig().getMaxPopPollingSize();
         if (isFull) {
             POP_LOGGER.info("polling {}, result POLLING_FULL, total:{}", remotingCommand, totalPollingNum.get());
@@ -409,6 +413,7 @@ public class PopLongPollingService extends ServiceThread {
             // check size
             int size = queue.size();
             // 不能超过 1024
+            // 单个 queue 的 polling request 个数不能超过 1024
             if (size > brokerController.getBrokerConfig().getPopPollingSize()) {
                 POP_LOGGER.info("polling {}, result POLLING_FULL, singleSize:{}", remotingCommand, size);
                 return POLLING_FULL;

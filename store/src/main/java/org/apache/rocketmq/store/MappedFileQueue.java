@@ -65,7 +65,7 @@ public class MappedFileQueue implements Swappable {
         // user.home/stpre/timerlog
         this.storePath = storePath;
         this.mappedFileSize = mappedFileSize;
-        // consume queue 这里为 null 因为是后台 reput 线程构建所以不需要异步创建，不用考虑文件的创建对实时性的影响
+        // timerlog , consume queue 这里为 null 因为是后台 reput 线程构建所以不需要异步创建，不用考虑文件的创建对实时性的影响
         // commit log 会使用 allocateMappedFileService， 因为消息是实时写入，不能受到文件创建开销的影响
         this.allocateMappedFileService = allocateMappedFileService;
     }
@@ -636,8 +636,8 @@ public class MappedFileQueue implements Swappable {
         return deleteCount;
     }
     // offset : commitlog 最小 offsetPy
-    // checkOffset: timer log 最后一个 unit 的 offset
-    // TimerLog.UNIT_SIZE
+    // checkOffset: timer log 文件中最后一个 unit 的 offset（所有mappedFile中最后一个unit offset 都是一样的）
+    // 因为 timerlog 中存储的都是固定长度的 TimerLog.UNIT_SIZE
     // 挨个遍历 timer log 的 mappedFile
     // 如果timerlog mappedFile中最后一个延时消息的 offsetPy 小于 commitlog 最小 offsetPy
     // 说明整个 timerlog mappedFile 过期，需要清理
@@ -663,7 +663,7 @@ public class MappedFileQueue implements Swappable {
                         int size = result.getByteBuffer().getInt();//size
                         result.getByteBuffer().getLong(); //prev pos
                         int magic = result.getByteBuffer().getInt();
-                        if (size == unitSize && (magic | 0xF) == 0xF) {
+                        if (size == unitSize && (magic | 0xF) == 0xF) { // unit 无损坏
                             result.getByteBuffer().position(position + MixAll.UNIT_PRE_SIZE_FOR_MSG);
                             // timerlog 中最后一个延时消息的 offsetPy 小于 commitlog 最小 offsetPy
                             // 说明整个 timerlog mappedFile 过期，需要清理
@@ -698,7 +698,7 @@ public class MappedFileQueue implements Swappable {
                 }
             }
         }
-
+        // 从 mappedFiles 集合中删除
         deleteExpiredFile(files);
 
         return deleteCount;

@@ -195,6 +195,7 @@ public class BrokerController {
     protected final BroadcastOffsetManager broadcastOffsetManager;
     // 管理所有消费者组相关信息
     protected final ConsumerManager consumerManager;
+    // 消费者订阅关系， FilterExpress(tag or sql92)
     protected final ConsumerFilterManager consumerFilterManager;
     protected final ConsumerOrderInfoManager consumerOrderInfoManager;
     protected final PopInflightMessageCounter popInflightMessageCounter;
@@ -949,6 +950,7 @@ public class BrokerController {
 
         if (messageStore != null) {
             // 添加 putMessageHook , sendMessageBackHook
+            // 其中延时消息的转换就在 putMessageHook 中实现
             registerMessageStoreHook();
             // 加载 storepath 下的 commitlog , consumequeue , index 等文件，recover 相关 position
             result = this.messageStore.load();
@@ -1038,7 +1040,7 @@ public class BrokerController {
 
         return result;
     }
-
+    // 调用自 org.apache.rocketmq.broker.BrokerController.recoverAndInitService
     public void registerMessageStoreHook() {
         List<PutMessageHook> putMessageHookList = messageStore.getPutMessageHookList();
 

@@ -295,6 +295,7 @@ public class ClusterMetadataService extends AbstractStartAndShutdown implements 
         try {
             // 如果 topic 指定的是 clusterName，那么就随机获取集群（clusterName）中的一个副本集，获取副本集中 master broker
             // broker 启动的时候会在创建 topicConfigManger 的时候初始化系统级 topic 包括 brokerClusterName
+            // 每个 broker 都会向 nameServer 注册这个系统 topic
             // 这样 proxy 可以通过 brokerClusterName topic 获取到整个集群所有副本集拓扑
             List<BrokerData> brokerDatas = topicRouteService.getAllMessageQueueView(ProxyContext.createForInner(this.getClass()), topic).getTopicRouteData().getBrokerDatas();
             int skipNum = random.nextInt(brokerDatas.size());

@@ -108,7 +108,8 @@ public class ConsumerOrderInfoManager extends ConfigManager {
         }
 
         OrderInfo orderInfo = qs.get(queueId);
-
+        // 每 pop 一批新的 FIFO 消息都会创建一个新的 orderInfo（替换旧的）
+        // 在 FIFO 消费场景下，每个 topic@group@queue 只会对应一个 orderInfo，因为 FIFO 消息不是你想 pop 就能 pop 的
         if (orderInfo != null) {
             OrderInfo newOrderInfo = new OrderInfo(attemptId, popTime, invisibleTime, msgQueueOffsetList, System.currentTimeMillis(), 0);
             // 填充 offsetConsumedCount
@@ -127,6 +128,7 @@ public class ConsumerOrderInfoManager extends ConfigManager {
         if (offsetConsumedCount != null) {
             Set<Long> offsetSet = offsetConsumedCount.keySet();
             for (Long offset : offsetSet) {
+                // 获取本次 pop 出来的 FIFO 消息的消费次数
                 Integer consumedTimes = offsetConsumedCount.getOrDefault(offset, 0);
                 // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
                 // 0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
@@ -156,19 +158,20 @@ public class ConsumerOrderInfoManager extends ConfigManager {
         updateLockFreeTimestamp(topic, group, queueId, orderInfo);
     }
     // 如果 inflight 消息全部 ack 则允许 pop
-    // pop 出来的这批消息没有全部 ack, 但是这些未 ack 消息的 invisibleTime 必须全部到达，则允许 pop
-    // 只要有一个未 ack 并且它的 invisibleTime 未到则不允许 pop
+    // pop 出来的这批消息没有全部 ack, 但是第一个未 ack 消息的 invisibleTime 以到达，则允许 pop (FIFO消息的重试机制）
+    // 只要第一个未 ack 并且它的 invisibleTime 未到则不允许 pop
     public boolean checkBlock(String attemptId, String topic, String group, int queueId, long invisibleTime) {
         String key = buildKey(topic, group);
         ConcurrentHashMap<Integer/*queueId*/, OrderInfo> qs = table.get(key);
         if (qs == null) {
+            // 一个 topic 在一个 broker 上最多 16 个队列
             qs = new ConcurrentHashMap<>(16);
             ConcurrentHashMap<Integer/*queueId*/, OrderInfo> old = table.putIfAbsent(key, qs);
             if (old != null) {
                 qs = old;
             }
         }
-
+        // 每个队列对应一个 OrderInfo，记录该队列的顺序消费情况
         OrderInfo orderInfo = qs.get(queueId);
 
         if (orderInfo == null) {
@@ -206,13 +209,13 @@ public class ConsumerOrderInfoManager extends ConfigManager {
             log.warn("OrderInfo is null, {}, {}, {}", key, queueOffset, orderInfo);
             return queueOffset + 1;
         }
-
+        // 队列中当前 pop 出来的所有 FIFO 消息
         List<Long> o = orderInfo.offsetList;
         if (o == null || o.isEmpty()) {
             log.warn("OrderInfo is empty, {}, {}, {}", key, queueOffset, orderInfo);
             return -1;
         }
-
+        // popTime 必须相同，证明要 ack 的消息就是该批次的消息
         if (popTime != orderInfo.popTime) {
             log.warn("popTime is not equal to orderInfo saved. key: {}, offset: {}, orderInfo: {}, popTime: {}", key, queueOffset, orderInfo, popTime);
             return -2;
@@ -241,6 +244,7 @@ public class ConsumerOrderInfoManager extends ConfigManager {
         //set bit
         // 在消息的对应位置上标记 ack
         orderInfo.setCommitOffsetBit(orderInfo.commitOffsetBit | (1L << i));
+        // 获取需要 commit 的 nextOffset
         // 队列中所有的 pop 顺序消息都已经 ack
         // 那就继续从最后一个 inflight 消息的下一个开始 pop
         // 从第一个没有 ack 的 inflight 消息开始 pop
@@ -248,6 +252,7 @@ public class ConsumerOrderInfoManager extends ConfigManager {
         long nextOffset = orderInfo.getNextOffset();
         // 获取第一个未 ack 消息的 invisibleTime
         // 只要 invisibleTime 一到则 notifyMessageArrive
+        // 比如：第一个消息已经ack了，那么现在就要开启第二个消息的 invisibleTime 定时
         updateLockFreeTimestamp(topic, group, queueId, orderInfo);
         return nextOffset;
     }
@@ -402,6 +407,7 @@ public class ConsumerOrderInfoManager extends ConfigManager {
         /**
          * next visible timestamp for message
          * key: message queue offset
+         * 记录每一个顺序消息的 visible timestamp(时间戳)
          */
         @JSONField(name = "ot")
         private Map<Long, Long> offsetNextVisibleTime;
@@ -412,6 +418,8 @@ public class ConsumerOrderInfoManager extends ConfigManager {
          * 如果 orderInfo 中的消息全部 ack,那么这里仍然是空的
          * 只有当 orderInfo 中的未 ack 消息 invisibleTime 到期，通知重新拉取的时候，才会填充这里
          * 拉取的 FIFO 消息中包含重试消息 mergeOffsetConsumedCount 创建填充 offsetConsumedCount
+         *
+         * 这里只会保存重复消费的消息 offset 以及重复消费的次数，第一次被拉取的消息不会保存在这里，see:mergeOffsetConsumedCount
          */
         @JSONField(name = "oc")
         private Map<Long, Integer> offsetConsumedCount;
@@ -535,8 +543,8 @@ public class ConsumerOrderInfoManager extends ConfigManager {
             return simple;
         }
         // 如果 inflight 消息全部 ack 则允许 pop
-        // pop 出来的这批消息没有全部 ack, 但是这些未 ack 消息的 invisibleTime 必须全部到达，则允许 pop
-        // 只要有一个未 ack 并且它的 invisibleTime 未到则不允许 pop
+        // pop 出来的这批消息没有全部 ack, 但是第一个未 ack 消息的 invisibleTime 以到达，则允许 pop
+        // 只要第一个未 ack 并且它的 invisibleTime 未到则不允许 pop
         @JSONField(serialize = false, deserialize = false)
         public boolean needBlock(String attemptId, long currentInvisibleTime) {
             // 还没有开始 pop 顺序消息，不需要 block， 直接 pop
@@ -561,7 +569,7 @@ public class ConsumerOrderInfoManager extends ConfigManager {
                     // 最近一次 popTime
                     long nextVisibleTime = popTime + invisibleTime;
                     if (offsetNextVisibleTime != null) {
-                        // 第一个未 ack 消息的 invisibleTime
+                        // 第一个未 ack 消息的 invisibleTime（时间戳）
                         Long time = offsetNextVisibleTime.get(this.getQueueOffset(i));
                         if (time != null) {
                             nextVisibleTime = time;
@@ -602,6 +610,7 @@ public class ConsumerOrderInfoManager extends ConfigManager {
                     // 消息可见时间
                     long nextVisibleTime = popTime + invisibleTime;
                     if (offsetNextVisibleTime != null) {
+                        // 获取消息的 visible timestamp
                         Long time = offsetNextVisibleTime.get(this.getQueueOffset(i));
                         if (time != null) {
                             nextVisibleTime = time;
@@ -692,16 +701,23 @@ public class ConsumerOrderInfoManager extends ConfigManager {
             }
             Set<Long> preQueueOffsetSet = new HashSet<>();
             for (int i = 0; i < preOffsetList.size(); i++) {
+                // 获取前一个 orderInfo 中的消息的 queue offset
                 preQueueOffsetSet.add(getQueueOffset(preOffsetList, i));
             }
+            // 本次 pop 出来的 FIFO 消息 offsetList
             for (int i = 0; i < offsetList.size(); i++) {
+                // 获取本次 FIFO 消息的 queueOffset
                 long queueOffset = this.getQueueOffset(i);
+                // 如果本次 pop 出来的消息也存在于上一次的 orderInfo 中
+                // 那么就说明该消息是重复消费
+                // 这里只会保存重复消费的消息 offset 以及重复消费的次数，第一次被拉取的消息不会保存在这里
                 if (preQueueOffsetSet.contains(queueOffset)) {
                     int count = 1;
                     Integer preCount = prevOffsetConsumedCount.get(queueOffset);
                     if (preCount != null) {
                         count = preCount + 1;
                     }
+                    // 统 FIFO 消息被消费的次数
                     offsetConsumedCount.put(queueOffset, count);
                 }
             }

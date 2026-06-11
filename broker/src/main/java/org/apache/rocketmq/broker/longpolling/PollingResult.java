@@ -22,7 +22,7 @@ public enum PollingResult {
     POLLING_SUC,
     // totalPollingNum >= 100000
     // pollingMap 中对应的 key->Topic@ConsumerGroup@QueueId 的 popRequest 超过 1024
-    POLLING_FULL,
+    POLLING_FULL, // polling request 的数量限制
     // currentTime 超过 BornTime + PollTime （过期时间戳）
     POLLING_TIMEOUT,
     // requestHeader.getPollTime() <= 0 || longPollingService.isStopped()

@@ -55,6 +55,7 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
     private static final Logger log = LoggerFactory.getLogger(LoggerName.PROXY_LOGGER_NAME);
     // 由 org.apache.rocketmq.proxy.grpc.v2.GrpcMessagingApplication.telemetry 填充 ClientSetting
     // key : clientId
+    // 首先用 proxy 端默认的 SubscriptionGroupConfig 与客户端传递过来的 setting 进行合并，缓存在 CLIENT_SETTINGS_MAP 中
     protected static final Map<String, Settings> CLIENT_SETTINGS_MAP = new ConcurrentHashMap<>();
 
     private final MessagingProcessor messagingProcessor;
@@ -212,6 +213,7 @@ public class GrpcClientSettingsManager extends ServiceThread implements StartAnd
     protected Settings.Builder createDefaultConsumerSettingsBuilder() {
         // 获取订阅关系的默认配置
         // SubscriptionGroupConfig 是由 admin 创建消费者组的时候填充到 broker 的
+        // 这里使用 proxy 端默认的 SubscriptionGroupConfig 与客户端的 setting 进行合并
         return mergeSubscriptionData(Settings.newBuilder().getDefaultInstanceForType(), new SubscriptionGroupConfig())
             .toBuilder();
     }

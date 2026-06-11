@@ -109,8 +109,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
     private final Random random = new Random(System.currentTimeMillis());
     // DEFAULT_CLUSTER_NAME rmq_sys_REVIVE_LOG_
     // 用于存储所有 pop check point 的 topic
-    // 未到 invisibleTime 的 infight 消息存储 ReviveTopic 中，时间一到，投递到 ReviveQid
-    // 所以 reviveQid 中存储的都是已到 invisibleTime 的 infight 消息，重新可见
+    // 未到 invisibleTime 的 infight 消息存储 ReviveTopic 中，时间一到(未ack)，投递到 ReviveQid
+    // 所以 reviveQid 中存储的都是已到 invisibleTime 的 infight 消息(未ack)，重新可见
     private final String reviveTopic;
 
     private final PopLongPollingService popLongPollingService;
@@ -227,7 +227,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
     }
     // POP模式下的消费者除了主动订阅 origin topic 之外，broker 还会为你自动订阅 retry topic
     // pop 消息的 offset 由 broker 的 popMessageProcessor 负责推进，拉一批往前推一批
-    // 由于是消费者组并发 pop,所以需要保证其他消费者可以 pop 的接下来的消息，offset 只能一直向前推
+    // 由于是消费者组下多个消费者并发 pop,所以需要保证其他消费者可以 pop 的接下来的消息，offset 只能一直向前推
     // 而 ack pop message 只能保证它不会被重试
     // 将未写入 reviveTopic 的 pop checkpoint 写入 reviveTopic
     // 提交已写入 reviveTopic 的 pop checkpoint -> nextBeginOffset
@@ -239,9 +239,11 @@ public class PopMessageProcessor implements NettyRequestProcessor {
     // org.apache.rocketmq.broker.processor.PopBufferMergeService.scan
     // FIFO 消息的 offset 管理有自己的一套方案（ConsumerOrderInfoManger, AckMessageProcessor）, 以上是非 FIFO 消息的 offset 管理
 
+    // 当 ack FIFO 消息的时候才会提交 offset
     // 当队列中所有 inflight FIFO 消息都已经 ack，那么 offset 就推进到最后一个 inflight 消息的下一个开始 pop
     // 否则就推进到第一个没有 ack 的 inflight 消息开始 pop
     // 如果 ack 的是第二个消息，那么这里获取的仍然是第一个消息的 offset
+    // see : org.apache.rocketmq.broker.processor.AckMessageProcessor.ackOrderly
     @Override
     public RemotingCommand processRequest(final ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
@@ -411,9 +413,11 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                 POP_LOGGER.warn("Build default subscription error, group: {}", requestHeader.getConsumerGroup());
             }
         }
-
+        // 用于存放拉取到的消息
         GetMessageResult getMessageResult = new GetMessageResult(requestHeader.getMaxMsgNums());
+        // 用于过滤订阅的消息
         ExpressionMessageFilter finalMessageFilter = messageFilter;
+        // orgin topic 的 subscriptionData
         SubscriptionData finalSubscriptionData = subscriptionData;
         // https://github.com/apache/rocketmq/wiki/%5BRIP%E2%80%9073%5D-Pop-Consumption-Improvement-Based-on-RocksDB
         // popConsumerKVServiceEnable = false
@@ -540,15 +544,15 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         }
         // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
         // 0->queueId->startOffset
-        // 从多个 queue 拉消息就对应多条记录
+        // 从多个 queue 拉消息就对应多条记录用 ； 分割
         StringBuilder startOffsetInfo = new StringBuilder(64);
         // 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
-        // 0->queueId-> msgQueueOffsets
-        // 从多个 queue 拉消息就对应多条记录
+        // 0->queueId-> msgQueueOffsets(，分割)
+        // 从多个 queue 拉消息就对应多条记录用 ； 分割
         StringBuilder msgOffsetInfo = new StringBuilder(64);
         // getRetry : 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2
         // 0 -> qo(QUEUE_OFFSET)queueId%queueOffset -> orderCount(表示消息被消费的次数)
-        // 拉取了多少条顺序消息就对应多少记录
+        // 拉取了多少条顺序消息就对应多少记录用 ； 分割
         StringBuilder orderCountInfo = requestHeader.isOrder() ? new StringBuilder(64) : null;
 
         // Due to the design of the fields startOffsetInfo, msgOffsetInfo, and orderCountInfo,
@@ -566,9 +570,10 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             needRetryV1 = randomQ % 2 == 0;
         }
         long popTime = System.currentTimeMillis();
-        // 返回值为队列中剩余消息个数
+        // 返回值为 restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
         CompletableFuture<Long> getMessageFuture = CompletableFuture.completedFuture(0L);
         if (needRetry && !requestHeader.isOrder()) {
+            // order 不会使用 reviveTopic， 重试消息也不会进入到 retry topic
             if (needRetryV1) {
                 String retryTopic = KeyBuilder.buildPopRetryTopicV1(requestHeader.getTopic(), requestHeader.getConsumerGroup());
                 getMessageFuture = popMsgFromTopic(retryTopic, true, getMessageResult, requestHeader, reviveQid, channel,
@@ -611,6 +616,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         }
 
         final RemotingCommand finalResponse = response;
+        // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
         getMessageFuture.thenApply(restNum -> {
             try {
                 if (request.getCallbackList() != null) {
@@ -639,7 +645,10 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                 // 加入成功
                 if (PollingResult.POLLING_SUC == pollingResult) {
                     if (restNum > 0) {
-                        // 如果有消息则通知其他消费者 pop 消息
+                        // 如果有消息则通知其他消费者 pop 消息，long-polling request 在 pollMap 中的排序规则
+                        // 1. 过期时间越近的排在最前面
+                        // 2. op(全局计数COUNTER) 越小排在最前面
+                        // 目的是通知其他的 long-polling request
                         popLongPollingService.notifyMessageArriving(
                             requestHeader.getTopic(), requestHeader.getQueueId(), requestHeader.getConsumerGroup(),
                             null, 0L, null, null);
@@ -724,7 +733,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         }).thenAccept(result -> NettyRemotingAbstract.writeResponse(channel, request, result));
         return null;
     }
-
+    // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
+    // 初始拉取 restNum = 0，每拉取一个队列，累加队列中剩余消息个数
     private CompletableFuture<Long> popMsgFromTopic(TopicConfig topicConfig, boolean isRetry, GetMessageResult getMessageResult,
         PopMessageRequestHeader requestHeader, int reviveQid, Channel channel, long popTime,
         ExpressionMessageFilter messageFilter, StringBuilder startOffsetInfo,
@@ -735,14 +745,19 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                 // 随机选取
                 int queueId = (randomQ + i) % topicConfig.getReadQueueNums();
                 getMessageFuture = getMessageFuture.thenCompose(restNum ->
+                    // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
+                    // 初始拉取 restNum = 0，每拉取一个队列，累加队列中剩余消息个数
                     popMsgFromQueue(topicConfig.getTopicName(), requestHeader.getAttemptId(), isRetry,
                         getMessageResult, requestHeader, queueId, restNum, reviveQid, channel, popTime, messageFilter,
                         startOffsetInfo, msgOffsetInfo, orderCountInfo));
             }
         }
+        // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
+        // 初始拉取 restNum = 0，每拉取一个队列，累加队列中剩余消息个数
         return getMessageFuture;
     }
-    // 返回剩余消息个数
+    // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
+    // 初始拉取 restNum = 0，每拉取一个队列，累加队列中剩余消息个数
     private CompletableFuture<Long> popMsgFromTopic(String topic, boolean isRetry, GetMessageResult getMessageResult,
         PopMessageRequestHeader requestHeader, int reviveQid, Channel channel, long popTime,
         ExpressionMessageFilter messageFilter, StringBuilder startOffsetInfo,
@@ -751,7 +766,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         return popMsgFromTopic(topicConfig, isRetry, getMessageResult, requestHeader, reviveQid, channel, popTime,
             messageFilter, startOffsetInfo, msgOffsetInfo, orderCountInfo, randomQ, getMessageFuture);
     }
-    // 返回剩余消息个数
+    // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
+    // 初始拉取 restNum = 0，每拉取一个队列，累加队列中剩余消息个数
     private CompletableFuture<Long> popMsgFromQueue(String topic, String attemptId, boolean isRetry,
         GetMessageResult getMessageResult,
         PopMessageRequestHeader requestHeader, int queueId, long restNum, int reviveQid,
@@ -784,6 +800,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                 // FIFO 消息不会关心剩余消息数，因为 FIFO 消息不是想拉就能拉的
                 if (!requestHeader.isOrder()) {
                     // consumer queue 中还有多少个 message
+                    // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
                     restNum = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId) - offset + restNum;
                 }
                 future.complete(restNum);
@@ -802,6 +819,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                 topic, requestHeader.getConsumerGroup(), queueId);
             try {
                 // consumer queue 中还有多少个 message
+                // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
                 restNum = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId) - offset + restNum;
                 future.complete(restNum);
             } catch (ConsumeQueueException e) {
@@ -831,19 +849,24 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                 // 如果是顺序消费场景，如果其他 consumer 已经拉取了队列中的消息但是还没有 ack
                 // 那么在这里该请求就不能拉取消息，当其他 consumer ack message 之后，会通知 long-polling service，从而发起重新拉取请求
                 // 如果 inflight 消息全部 ack 则允许 pop
-                // pop 出来的这批消息没有全部 ack, 但是这些未 ack 消息的 invisibleTime 必须全部到达，则允许 pop
-                // 只要有一个未 ack 并且它的 invisibleTime 未到则不允许 pop
+                // pop 出来的这批消息没有全部 ack, 但是第一个未 ack 消息的 invisibleTime 以到达，则允许 pop（FIFO消息的重试机制）
+                // 只要第一个未 ack 并且它的 invisibleTime 未到则不允许 pop
                 if (brokerController.getConsumerOrderInfoManager().checkBlock(
                     attemptId, topic, requestHeader.getConsumerGroup(), queueId, requestHeader.getInvisibleTime())) {
                     // should not add accumulation(max offset - consumer offset) here
+                    // 顺序消费场景不能累积剩余消息，因为这里的语义是只要有剩余消息就会通知 long-polling service 来拉取
+                    // 很显然，当顺序消费场景被 block 之后，即使有剩余消息也不能通知 long-polling service 来拉取
                     future.complete(restNum);
                     return future;
                 }
                 // 需要忽略积压消息
+                // 顺序消费场景不能累积剩余消息，因为这里的语义是只要有剩余消息就会通知 long-polling service 来拉取
+                // 很显然，当顺序消费场景被 block 之后，即使有剩余消息也不能通知 long-polling service 来拉取
                 this.brokerController.getPopInflightMessageCounter().clearInFlightMessageNum(
                     topic, requestHeader.getConsumerGroup(), queueId);
             }
             // 获取到了足够的 message 返回
+            // 对于 FIFO 场景来说只要没有 block 就可以通知 long-polling service
             if (getMessageResult.getMessageMapedList().size() >= requestHeader.getMaxMsgNums()) {
                 restNum = this.brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId) - offset + restNum;
                 future.complete(restNum);
@@ -854,7 +877,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             future.complete(restNum);
             return future;
         }
-        // consuemr queue 剩余的 message
+        // restNum 其实真正表示的是该 topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
+        // 初始拉取 restNum = 0，每拉取一个队列，累加队列中剩余消息个数
         AtomicLong atomicRestNum = new AtomicLong(restNum);
         // popOffset
         AtomicLong atomicOffset = new AtomicLong(offset);
@@ -889,6 +913,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             }).thenApply(result -> {
                 if (result == null) {
                     try {
+                        // topic 中还有多少剩余消息（所有 consumer queue 剩余消息总和）
                         // 队列还剩余多少消息： 最大的消息 offset - 已经拉取到的消息个数
                         atomicRestNum.set(brokerController.getMessageStore().getMaxOffsetInQueue(topic, queueId) - atomicOffset.get() + atomicRestNum.get());
                     } catch (ConsumeQueueException e) {
@@ -915,8 +940,8 @@ public class PopMessageProcessor implements NettyRequestProcessor {
 
                     if (isOrder) {
                         // 如果 inflight 消息全部 ack 则允许 pop
-                        // pop 出来的这批消息没有全部 ack, 但是这些未 ack 消息的 invisibleTime 必须全部到达，则允许 pop
-                        // 只要有一个未 ack 并且它的 invisibleTime 未到则不允许 pop
+                        // pop 出来的这批消息没有全部 ack, 但是第一个未 ack 消息的 invisibleTime 必须全部到达，则允许 pop
+                        // 只要第一个未 ack 并且它的 invisibleTime 未到则不允许 pop
 
                         // 拉取到顺序消息之后，更新 ConsumerOrderInfoManager
                         // 创建队列的 orderInfo，一个 AttemptId 也就是一个 pop 批次对应一个 orderInfo（FIFO check point）
@@ -924,6 +949,9 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                         // 只有允许 pop FIFO  消息的时候才会更新 orderInfo
                         // 获取 orderInfo 中第一个还未 ack 的消息的 invisibleTime, 添加延时任务，当 invisibleTime 达到的时候
                         // 通知 popRequest 重新拉取
+
+                        // 每 pop 一批新的 FIFO 消息都会创建一个新的 orderInfo（替换旧的）
+                        // 在 FIFO 消费场景下，每个 topic@group@queue 只会对应一个 orderInfo，因为 FIFO 消息不是你想 pop 就能 pop 的
                         this.brokerController.getConsumerOrderInfoManager().update(requestHeader.getAttemptId(), isRetry, topic,
                             requestHeader.getConsumerGroup(),
                             queueId, popTime, requestHeader.getInvisibleTime(), result.getMessageQueueOffset(),
@@ -961,6 +989,9 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                     } else {
                         // 只是将 check point 添加到内存中 -> commitOffsets
                         // 不会存储到 reviveTopic
+                        // 相当于是变向提交 offset -> NextBeginOffset（但未真正提交）
+                        // 只不过下一次会从 NextBeginOffset 开始 pop
+                        // 后续由 PopBufferMergerService run 直接提交 nextBeginOffset
                         popBufferMergeService.addCkMock(requestHeader.getConsumerGroup(), topic, queueId, finalOffset,
                             requestHeader.getInvisibleTime(), popTime, reviveQid, result.getNextBeginOffset(), brokerController.getBrokerConfig().getBrokerName());
                     }
@@ -1009,6 +1040,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
                     queueId,
                     result.getMessageCount()
                 );
+                // topic 中还剩余多少消息未拉取
                 return atomicRestNum.get();
             }).whenComplete((result, throwable) -> {
                 if (throwable != null) {
@@ -1066,6 +1098,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
             // initPopOffsetByCheckMsgInMem = true
             if (this.brokerController.getBrokerConfig().isInitPopOffsetByCheckMsgInMem() &&
                 this.brokerController.getMessageStore().getMinOffsetInQueue(topic, queueId) <= 0 &&
+                // mincore 判断消息所在 commitlog 的位置是否在 page cache 中
                 this.brokerController.getMessageStore().checkInMemByConsumeOffset(topic, queueId, 0, 1)) {
                 // 如果 consumer queue 中 consumerOffset = 0 的 cqUnit 在 page cache 中，那么就从一开始进行消费
                 // 因为都在 page cache 中不属于冷读
@@ -1137,6 +1170,9 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         this.brokerController.getBrokerStatsManager().incBrokerCkNums(1);
         this.brokerController.getBrokerStatsManager().incGroupCkNums(requestHeader.getConsumerGroup(), requestHeader.getTopic(), 1);
         // 默认不合并，addBufferSuc = false
+        // enablePopBufferMerge = false
+        // true : 则 popCheckPoint 保存在 PopBufferMergeService 中， ack message 的时候直接修改 PopBufferMergeService 中 check point 的 bitsmap
+        // false： 则 popCheckPoint 写入到 reviveTopic with CK_TAG , ack message 也是写入到 reviveTopic with AK_TAG
         final boolean addBufferSuc = this.popBufferMergeService.addCk(
             ck, reviveQid, -1, getMessageTmpResult.getNextBeginOffset()
         );
@@ -1234,7 +1270,7 @@ public class PopMessageProcessor implements NettyRequestProcessor {
         public boolean tryLock(String topic, String consumerGroup, int queueId) {
             return tryLock(buildLockKey(topic, consumerGroup, queueId));
         }
-        // pop 消息的时候以及 ack 消息的时候需要加锁
+        // pop 消息的时候以及 ack 消息的时候需要加锁，commitOffset 的时候也需要
         // pop 消息的时候 lock 失败，直接跳过，获取下一个 queuelock
         // ack 消息的时候会一直 try lock 直到成功
         public boolean tryLock(String key) {

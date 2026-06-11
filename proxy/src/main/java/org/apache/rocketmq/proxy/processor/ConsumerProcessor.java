@@ -79,8 +79,8 @@ public class ConsumerProcessor extends AbstractProcessor {
         String consumerGroup,
         String topic,
         int maxMsgNums,
-        long invisibleTime,
-        long pollTime,
+        long invisibleTime, // 60s
+        long pollTime, // 20s
         int initMode,
         SubscriptionData subscriptionData,
         boolean fifo,
@@ -108,8 +108,8 @@ public class ConsumerProcessor extends AbstractProcessor {
         String consumerGroup,
         String topic,
         int maxMsgNums,
-        long invisibleTime,
-        long pollTime, // LongPollingTimeout
+        long invisibleTime, // 60s
+        long pollTime, // LongPollingTimeout 20s
         int initMode,
         SubscriptionData subscriptionData,
         boolean fifo,
@@ -133,9 +133,9 @@ public class ConsumerProcessor extends AbstractProcessor {
             // broker 端对于 queueId = -1 的处理， see : PopMessageProcesser
             // broker 端随机算去拉取 queue(不管 FIFO 还是其他类型消息)
             requestHeader.setQueueId(messageQueue.getQueueId());
-            requestHeader.setMaxMsgNums(maxMsgNums);
-            requestHeader.setInvisibleTime(invisibleTime);
-            requestHeader.setPollTime(pollTime);// LongPollingTimeout
+            requestHeader.setMaxMsgNums(maxMsgNums); // 32
+            requestHeader.setInvisibleTime(invisibleTime);//60s
+            requestHeader.setPollTime(pollTime);// LongPollingTimeout 20s
             requestHeader.setInitMode(initMode);
             requestHeader.setExpType(subscriptionData.getExpressionType());
             requestHeader.setExp(subscriptionData.getSubString());
@@ -167,7 +167,7 @@ public class ConsumerProcessor extends AbstractProcessor {
                                     continue;
                                 }
                                 MessageAccessor.putProperty(messageExt, MessageConst.PROPERTY_POP_CK, handleString);
-
+                                // broker 已经过滤了
                                 PopMessageResultFilter.FilterResult filterResult =
                                     popMessageResultFilter.filterMessage(ctx, consumerGroup, subscriptionData, messageExt);
                                 switch (filterResult) {
@@ -241,7 +241,7 @@ public class ConsumerProcessor extends AbstractProcessor {
             ackMessageRequestHeader.setTopic(handle.getRealTopic(topic, consumerGroup));
             ackMessageRequestHeader.setQueueId(handle.getQueueId());
             ackMessageRequestHeader.setExtraInfo(handle.getReceiptHandle());
-            ackMessageRequestHeader.setOffset(handle.getOffset());
+            ackMessageRequestHeader.setOffset(handle.getOffset());// msgQueueOffset
 
             future = this.serviceManager.getMessageService().ackMessage(
                 ctx,

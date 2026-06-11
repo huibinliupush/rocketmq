@@ -160,6 +160,7 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
         }
         // FIFO 消息
         if (ExtraInfoUtil.isOrder(extraInfo)) {
+            // 修改队列对应的 orderInfo 中的 offsetNextVisibleTime 集合（消息 offset -> invisibleTime）
             return CompletableFuture.completedFuture(
                 processChangeInvisibleTimeForOrder(requestHeader, extraInfo, response, responseHeader));
         }
@@ -233,6 +234,7 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
         long popTime = ExtraInfoUtil.getPopTime(extraInfo);
         long oldOffset = this.brokerController.getConsumerOffsetManager().queryOffset(requestHeader.getConsumerGroup(),
             requestHeader.getTopic(), requestHeader.getQueueId());
+        // fifo 消息已经 ack 过了，则忽略本次 changeInvisibleTime 请求
         if (requestHeader.getOffset() < oldOffset) {
             return response;
         }
@@ -241,10 +243,11 @@ public class ChangeInvisibleTimeProcessor implements NettyRequestProcessor {
         try {
             oldOffset = this.brokerController.getConsumerOffsetManager().queryOffset(requestHeader.getConsumerGroup(),
                 requestHeader.getTopic(), requestHeader.getQueueId());
+            // fifo 消息已经 ack 过了，则忽略本次 changeInvisibleTime 请求
             if (requestHeader.getOffset() < oldOffset) {
                 return response;
             }
-
+            // 新的可见时间
             long nextVisibleTime = System.currentTimeMillis() + requestHeader.getInvisibleTime();
             this.brokerController.getConsumerOrderInfoManager().updateNextVisibleTime(
                 requestHeader.getTopic(), requestHeader.getConsumerGroup(), requestHeader.getQueueId(), requestHeader.getOffset(), popTime, nextVisibleTime);

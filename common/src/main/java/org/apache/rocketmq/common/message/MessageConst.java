@@ -74,7 +74,7 @@ public class MessageConst {
     public static final String PROPERTY_PUSH_REPLY_TIME = "PUSH_REPLY_TIME";
     public static final String PROPERTY_CLUSTER = "CLUSTER";
     public static final String PROPERTY_MESSAGE_TYPE = "MSG_TYPE";
-    // retry topic 中的消息需要添加这个属性
+    // 所有消息都需要添加这个属性
     // startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset
     // 消息拉取到客户端后，会重写： startOffset popTime invisibleTime reviveQid 1( 0 表示 NORMAL_TOPIC，1 表示 RETRY_TOPIC，2 表示 RETRY_TOPIC_V2) brokerName queueId msgQueueOffset CommitLogOffset
     // 在原有基础上添加 CommitLogOffset
@@ -118,7 +118,7 @@ public class MessageConst {
     public static final String PROPERTY_TIMER_ENQUEUE_MS = "TIMER_ENQUEUE_MS";
     public static final String PROPERTY_TIMER_DEQUEUE_MS = "TIMER_DEQUEUE_MS";
     public static final String PROPERTY_TIMER_ROLL_TIMES = "TIMER_ROLL_TIMES";
-    // 延时消息投递时间戳
+    // 延时消息投递时间戳 deliverMs
     public static final String PROPERTY_TIMER_OUT_MS = "TIMER_OUT_MS";
     // 取消延时消息的消息需要设置 ： 被取消消息的 realTopic + UNIQKEY
     public static final String PROPERTY_TIMER_DEL_UNIQKEY = "TIMER_DEL_UNIQKEY";

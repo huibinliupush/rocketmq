@@ -108,6 +108,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
                 // 60s
                 actualInvisibleTime = proxyConfig.getDefaultInvisibleTimeMills();
             } else {
+                // InvisibleTime 的取值范围 10s 到 12h 之间
                 validateInvisibleTime(actualInvisibleTime,
                     ConfigurationManager.getProxyConfig().getMinInvisibleTimeMillsForRecv());// 10s
             }
@@ -186,6 +187,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
         public AddressableMessageQueue select(ProxyContext ctx, MessageQueueView messageQueueView) {
             try {
                 AddressableMessageQueue addressableMessageQueue = null;
+                // 里边封装保存了 topic 下所有副本集中在 master 上的所有的可读队列
                 MessageQueueSelector messageQueueSelector = messageQueueView.getReadSelector();
 
                 if (StringUtils.isNotBlank(brokerName)) {
@@ -194,6 +196,7 @@ public class ReceiveMessageActivity extends AbstractMessingActivity {
                 }
 
                 if (addressableMessageQueue == null) {
+                    // 通过 brokerIndex 在 brokerActingQueues 中轮询选取一个 AddressableMessageQueue
                     addressableMessageQueue = messageQueueSelector.selectOne(true);
                 }
                 return addressableMessageQueue;

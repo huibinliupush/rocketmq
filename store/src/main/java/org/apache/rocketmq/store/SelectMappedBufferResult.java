@@ -78,6 +78,7 @@ public class SelectMappedBufferResult {
             return true;
         }
         long pos = startOffset - mappedFile.getFileFromOffset();
+        // mincore 判断内存区域是否在 page cache 中
         return mappedFile.isLoaded(pos, size);
     }
 

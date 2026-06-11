@@ -104,7 +104,7 @@ public class TimerWheel {
          * slotsTotal 是支持 7 天时间维度的时间轮表盘，rocketmq 不像 netty , kafka 那样
          * netty 在 timerTask 中设计了延时轮数，表明当前处于第几轮，延时时间可以超过 256 大小的表盘
          * kafka 则是采用多级时间轮，超过表盘轮次会添加到下一轮表盘中
-         * rocketmq 中的延时任务数据结构没有设计只是轮数的属性，比如在 0 时刻，添加一个 0 延时的任务和添加一个延时 7 天的任务都会被添加
+         * rocketmq 中的延时任务数据结构没有设计指示轮数的属性，比如在 0 时刻，添加一个 0 延时的任务和添加一个延时 7 天的任务都会被添加
          * 到同一个 slot 中，而 slot 中的数据结构并没有涉及表示时间轮数的属性，所以每一个刻度都要有两个 % (slotsTotal * 2)
          * 因为在每一个时间刻度下都有可能出现添加一个延时 7 天的消息（不只是 0 时刻，其他时刻也是一样），
          * 如果不是 slotsTotal * 2 ，那么该刻度中就会出现延时 7 天的消息，这样是不行的，直接执行了
@@ -127,6 +127,8 @@ public class TimerWheel {
             fileChannel = randomAccessFile.getChannel();
             mappedByteBuffer = fileChannel.map(FileChannel.MapMode.READ_WRITE, 0, wheelLength);
             assert wheelLength == mappedByteBuffer.remaining();
+            // 大小为 wheelLength，初始化的时候会将 mappedByteBuffer 中的内容写入到该 buffer 中
+            // 存储 timer wheel
             this.byteBuffer = ByteBuffer.allocateDirect(wheelLength);
             this.byteBuffer.put(mappedByteBuffer);
         } catch (FileNotFoundException e) {
@@ -174,6 +176,7 @@ public class TimerWheel {
     public Slot getSlot(long timeMs) {
         Slot slot = getRawSlot(timeMs);
         if (slot.timeMs != timeMs / precisionMs * precisionMs) {
+            // 空的 slot
             return new Slot(-1, -1, -1);
         }
         return slot;
@@ -258,9 +261,16 @@ public class TimerWheel {
 
     //check the timerwheel to see if its stored offset > maxOffset in timerlog
     // 所有 (lastPos > maxOffset) 的 slot 中最小的 firstPos
+    // timer wheel 中的 slot 中存储的 firstPos ，lastPos 可能比 timerlog 中
+    // 的 maxOffset 还要大，这种情况的发生可能是由于timerlog损坏引起的，
+    // 所以这里要遍历 timer wheel 中的所有 slot, 挨个检查他们的firstPos ，lastPos
+    // 重新查找 timerlog 的 recoverPos, 寻找出所有 lastPos > maxOffset 的 slot
+    // 这些都是不正常的 slot, 近而找出这些不正常 slot 中最小的 firstPos
+    // 后续 timerlog 将从这个 firstpos 重新恢复
     public long checkPhyPos(long timeStartMs, long maxOffset) {
         long minFirst = Long.MAX_VALUE;
         int firstSlotIndex = getSlotIndex(timeStartMs);
+        // 检查 timer wheel 中的所有 slot
         for (int i = 0; i < slotsTotal * 2; i++) {
             // 从 currReadTime 对应的 slot 开始遍历所有 slot
             int slotIndex = (firstSlotIndex + i) % (slotsTotal * 2);

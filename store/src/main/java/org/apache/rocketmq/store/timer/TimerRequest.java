@@ -26,6 +26,7 @@ public class TimerRequest {
     private final long offsetPy;
     // 延时消息大小
     private final int sizePy;
+    // 到期时间戳
     private final long delayTime;
     // MAGIC_DEFAULT（初始创建时）
     private final int magic;
@@ -58,7 +59,7 @@ public class TimerRequest {
         this.offsetPy = offsetPy;
         // 延时消息大小
         this.sizePy = sizePy;
-        // 延时消息的 delayTime
+        // 延时消息的 delayTime（到期时间戳）
         this.delayTime = delayTime;
         // 进入 enqueuePutQueue 的时间戳
         this.enqueueTime = enqueueTime;

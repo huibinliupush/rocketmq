@@ -36,10 +36,13 @@ public class PopMessageRequestHeader extends TopicQueueRequestHeader {
     private String topic;
     @CFNotNull
     private int queueId;
+    // 32
     @CFNotNull
     private int maxMsgNums;
+    // 60s
     @CFNotNull
     private long invisibleTime;
+    // 20s
     @CFNotNull
     private long pollTime;
     @CFNotNull
@@ -54,7 +57,7 @@ public class PopMessageRequestHeader extends TopicQueueRequestHeader {
      * marked as order consume, if true
      * 1. not commit offset
      * 2. not pop retry, because no retry
-     * 3. not append check point, because no retry
+     * 3. not append check point, because no retry，因为不消费完就无法继续向前走，所以不需要 retry
      */
     private Boolean order = Boolean.FALSE;
 

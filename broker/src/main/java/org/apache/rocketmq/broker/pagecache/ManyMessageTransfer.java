@@ -67,12 +67,14 @@ public class ManyMessageTransfer extends AbstractReferenceCounted implements Fil
     @Override
     public long transferTo(WritableByteChannel target, long position) throws IOException {
         if (this.byteBufferHeader.hasRemaining()) {
-            // 先发送 header
+            // 先发送 header, 这里仍然是 heap buffer
+            // netty 会帮忙自动转换为 direct buffer， 之所以委托给 netty 的原因是由 netty 来统一管理 direct memory
             transferred += target.write(this.byteBufferHeader);
             return transferred;
         } else {
             // 在发送 body
             List<ByteBuffer> messageBufferList = this.getMessageResult.getMessageBufferList();
+            // 这里是 page cahce
             for (ByteBuffer bb : messageBufferList) {
                 if (bb.hasRemaining()) {
                     transferred += target.write(bb);

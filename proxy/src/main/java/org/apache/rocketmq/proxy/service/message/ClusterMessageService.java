@@ -123,7 +123,7 @@ public class ClusterMessageService implements MessageService {
     public CompletableFuture<AckResult> changeInvisibleTime(ProxyContext ctx, ReceiptHandle handle, String messageId,
         ChangeInvisibleTimeRequestHeader requestHeader, long timeoutMillis) {
         return this.mqClientAPIFactory.getClient().changeInvisibleTimeAsync(
-            this.resolveBrokerAddrInReceiptHandle(ctx, handle),
+            this.resolveBrokerAddrInReceiptHandle(ctx, handle), // 消息所在副本集的master
             handle.getBrokerName(),
             requestHeader,
             timeoutMillis

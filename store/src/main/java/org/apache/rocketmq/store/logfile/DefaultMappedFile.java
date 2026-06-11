@@ -127,6 +127,14 @@ public class DefaultMappedFile extends AbstractMappedFile {
         // see https://github.com/AdoptOpenJDK/openjdk-jdk11/blob/19fb8f93c59dfd791f62d41f332db9e306bc1422/src/java.base/windows/native/libnio/MappedByteBuffer.c#L34
         if (!SystemUtils.IS_OS_WINDOWS) {
             try {
+                // 这个方法的核心作用是判断内存映射文件的页面是否已经加载到物理内存中。然而，它的实现高度依赖于操作系统。
+                // 在绝大多数 POSIX 系统（如 Linux, macOS, Solaris, AIX）上，它使用标准的 mincore 系统调用来实现。
+                // 接收参数: 接收来自 Java 层的三个参数，即内存映射的起始地址 (address)、长度 (len) 和该内存区域包含的总页数 (numPages)。
+                // 准备向量数组: 为了接收 mincore 返回的每个内存页面的驻留状态，它会分配一个 char 类型的数组（向量）vec，其大小等于页数 numPages。mincore 会用每一位来标记一个页面的状态。
+                // 核心调用: 调用操作系统提供的 mincore() 函数，将之前分配好的 vec 数组的地址传入。
+                // result = mincore(a, (size_t)len, vec);
+                // mincore 是问题的关键：它会检查起始地址为 a，长度为 len 的虚拟内存区域，然后填充 vec 数组，告知调用者哪些页面当前驻留在物理内存（RAM）中。
+                // 分析结果: 遍历 vec 数组，检查每一个页面，核心逻辑是：只要有任何一个页面的状态位是 0，就意味着该页面没有驻留在物理内存中，函数便会立即返回 false。只有当所有页面都被标记为驻留时，isLoaded0() 才会返回 true。
                 isLoaded0method = MappedByteBuffer.class.getDeclaredMethod("isLoaded0", long.class, long.class, int.class);
                 isLoaded0method.setAccessible(true);
             } catch (NoSuchMethodException ignore) {
@@ -941,6 +949,13 @@ public class DefaultMappedFile extends AbstractMappedFile {
         }
         try {
             long addr = ((DirectBuffer) mappedByteBuffer).address() + position;
+            // int mincore(void *addr, size_t length, unsigned char *vec);
+            // addr: 要查询的内存区域的起始地址。最重要的一点是，addr 必须是系统内存页面大小的整数倍。这就是为什么 Java 在调用 isLoaded0 之前，
+            // 会通过 mappingOffset() 等方法计算出页对齐的地址。
+            // length: 要查询的内存区域的大小（以字节为单位）。该值不必是页面大小的整数倍，但 mincore 在实际处理时，会将其向上取整到下一个页面边界
+            // vec: 这是一个指向 unsigned char 数组的指针，用于接收结果。数组的长度至少为 (length + PAGE_SIZE - 1) / PAGE_SIZE 字节。
+            // mincore 返回后，vec 数组中的每个字节对应一个内存页面。该字节的最低有效位（Least Significant Bit, LSB） 为 1 时，
+            // 表示该页面驻留在物理内存中；为 0 则表示不在。
             return (boolean) IS_LOADED_METHOD.invoke(mappedByteBuffer, mappingAddr(addr), size, pageCount(size));
         } catch (Exception e) {
             log.info("invoke isLoaded0 of file {} error:", file.getAbsolutePath(), e);

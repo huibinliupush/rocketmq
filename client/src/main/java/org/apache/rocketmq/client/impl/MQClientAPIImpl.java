@@ -1113,6 +1113,7 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
         // value: queue 中消息的 queueOffset集合
         Map<String/*topicMark@queueId*/, List<Long>/*msg queueOffset*/> sortMap
             = buildQueueOffsetSortedMap(topic, msgFoundList);
+        // originTopic+QueueId -> pop check point
         Map<String, String> map = new HashMap<>(5);
         // 遍历拉取到的所有消息
         for (MessageExt messageExt : msgFoundList) {
@@ -1130,7 +1131,7 @@ public class MQClientAPIImpl implements NameServerUpdateCallback, StartAndShutdo
                     }
                     messageExt.getProperties().put(MessageConst.PROPERTY_POP_CK, map.get(key) + MessageConst.KEY_SEPARATOR + messageExt.getQueueOffset());
                 } else {
-                    // 只有 retry topic 才会构建 PROPERTY_POP_CK
+                    // 所有消息都会有 PROPERTY_POP_CK
                     if (messageExt.getProperty(MessageConst.PROPERTY_POP_CK) == null) {
                         // Normal Topic
                         final String queueIdKey;

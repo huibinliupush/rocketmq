@@ -81,8 +81,12 @@ public class TimerMessageStore {
     private volatile int state = INITIAL;
     // rmq_sys_wheel_timer 只有一个队列
     public static final String TIMER_TOPIC = TopicValidator.SYSTEM_TOPIC_PREFIX + "wheel_timer";
+    // 延时消息投递时间戳 deliverMs
     public static final String TIMER_OUT_MS = MessageConst.PROPERTY_TIMER_OUT_MS;
     // 进入 enqueuePutQueue 的时间戳
+    // MAX_VALUE ： 因为 enqueue 的时候，msg 已经到期了，直接放入 dequeuePutQueue 中，不会进入 timer wheel
+    // 这种情况下 EnqueueTime 设置为 MAX_VALUE
+    // see : org.apache.rocketmq.store.timer.TimerMessageStore.TimerEnqueuePutService.putMessageToTimerWheel
     public static final String TIMER_ENQUEUE_MS = MessageConst.PROPERTY_TIMER_ENQUEUE_MS;
     // 从时间轮中取出，准备投递到 real topic 时的时间戳
     public static final String TIMER_DEQUEUE_MS = MessageConst.PROPERTY_TIMER_DEQUEUE_MS;
@@ -166,20 +170,34 @@ public class TimerMessageStore {
     private TimerDequeueGetMessageService[] dequeueGetMessageServices;
     // 每隔 1000 ms 执行 flush timerLog,timerWheel,timerCheckpoint
     private TimerFlushService timerFlushService;
-
+    // 对应 slot 是空的，向前推进 readTim
+    // 只要任务处理完了 currReadTimeMs 就直接往前推，即使任务的处理时间低于 1s, 它也往前推
+    // 时间轮的转动靠的是 currWriteTimeMs
+    // 只要 currReadTimeMs < currWriteTimeMs,那么就不停的取出 currReadTimeMs 对应的 slot 去处理，然后currReadTimeMs向前移动（即使处理时间低于1s）
+    // 可以理解为 currReadTimeMs 就是用于无脑处理延后的消息，currWriteTimeMs 负责卡时间节奏
     protected volatile long currReadTimeMs;
     // currentTimeMillis 向下取整到 precisionMs 的整数倍
-    // 向 timer wheel 插入延时消息的时间轮指针
+    // 只是用于计算消息的 delayTime(slot 中的 delayTime,包括 needRoll), 在写入时间轮的时候当做 currentTime 来使用
+    // see : org.apache.rocketmq.store.timer.TimerMessageStore.doEnqueue
+    // 调整时间轮的写入时间戳，用系统启动时间初始化
+    // 读取时间戳是保存在 timerCheckPoint 中，持久化的
+    // 每当 TimerRequst 从 enqueuePutQueue 中写入 timerlog,timerWheel 中之后，movewriteTime
+    // enqueuePutQueue 没有数据时等待 10ms ，然后 movewriteTime
+    // 时间轮的转动靠的是 currWriteTimeMs
+    // 可以理解为 currReadTimeMs 就是用于无脑处理延后的消息，currWriteTimeMs 负责卡时间节奏
     protected volatile long currWriteTimeMs;
     protected volatile long preReadTimeMs;
     protected volatile long commitReadTimeMs;
     // TIMER_TOPIC queue 的当前处理位置
     // 每当从 queue 中读取出一个延时消息并将其 enqueuePutQueue 之后这里就向前推进到下一个 offset
+    // 在 broker 启动的过程中优先从 timerlog 中恢复，不行的话就从 timerCheckPoint 中获取
+    // SEE : org.apache.rocketmq.store.timer.TimerMessageStore.recover
+    // 从 TIMER_TOPIC queue 读取出来消息并写入 enqueuePutQueue 之后才会更新
     protected volatile long currQueueOffset; //only one queue that is 0
     // TIMER_TOPIC queue 的 commitQueueOffset
     // 当 enqueuePutQueue 中没有数据可拉取，用 currQueueOffset 赋值
     // 最后一个写入 timerlog 的延时消息对应在 TIMER_TOPIC queue 中的 queueOffset
-    protected volatile long commitQueueOffset;
+    protected volatile long commitQueueOffset;// 从 enqueuePutQueue 中写入 timerlog 中才会更新
     protected volatile long lastCommitReadTimeMs;
     protected volatile long lastCommitQueueOffset;
     // 最近一次从 TIMER_TOPIC queue 中读取到延时消息的时间戳
@@ -264,6 +282,7 @@ public class TimerMessageStore {
             this.timerRollWindowSlots = storeConfig.getTimerRollWindowSlot();
         }
         // 4M + 100
+        // 每个线程 4M + 100 大小的 bufferLocal
         bufferLocal = new ThreadLocal<ByteBuffer>() {
             @Override
             protected ByteBuffer initialValue() {
@@ -362,6 +381,10 @@ public class TimerMessageStore {
         MappedFile lastFile = timerLog.getMappedFileQueue().getLastMappedFile();
         if (null != lastFile) {
             // lastFlushPos 向前回退一个 file size
+            // 这个减法的根本目的，是为了在恢复时进行文件的完整性校验。仅仅从lastTimerLogFlushPos开始，无法确认上一个TimerLog文件是否完整
+            // 异常退出时：lastTimerLogFlushPos 指向的最后一条消息本身可能不完整。从更早的点开始，能通过校验确保只保留完整消息。
+            // 旧文件损坏时：如果直接从上个文件的lastTimerLogFlushPos恢复，但前一个文件有损坏，校验可能会失败并导致数据丢失。
+            // 而从更早的起点开始扫描，可以更准确地处理损坏部分，最大限度保证数据完整性。
             lastFlushPos = lastFlushPos - lastFile.getFileSize();
         }
         // 如果只有一个 timer log 文件，那么 lastFlushPos 回退到文件开始处
@@ -381,6 +404,7 @@ public class TimerMessageStore {
         // 修正 timer log 中最后一个有效的延时消息在 TIMER_TOPIC QUEUE 中的 queueOffset
         // timer_uint->(offsetPy,sizePy)->commitlog(MessageExt)->QueueOffset->ConsumeQueue(比较 offsetPy 是否相同)
         // 不相同则继续在 ConsumeQueue 中向前查找直到找到相同的 offsetPy，那么此时的 queueOffset 就找到了
+        // 只能向前去找，因为 timer log 中最后一个消息的 queueOffset 一定是最大的，所以只能在 consume queue 中向前查找
         long queueOffset = reviseQueueOffset(processOffset);
         if (-1 == queueOffset) {
             // 没找到按照 timerCheckPoint 中保存的来
@@ -419,6 +443,12 @@ public class TimerMessageStore {
         //hard to test
         // check the timerwheel to see if its stored offset > maxOffset in timerlog
         // 所有 (lastPos > maxOffset) 的 slot 中最小的 firstPos
+        // timer wheel 中的 slot 中存储的 firstPos ，lastPos 可能比 timerlog 中
+        // 的 maxOffset 还要大，这种情况的发生可能是由于timerlog损坏引起的，
+        // 所以这里要遍历 timer wheel 中的所有 slot, 挨个检查他们的firstPos ，lastPos
+        // 重新查找 timerlog 的 recoverPos, 寻找出所有 lastPos > maxOffset 的 slot
+        // 这些都是不正常的 slot, 近而找出这些不正常 slot 中最小的 firstPos
+        // 后续 timerlog 将从这个 firstpos 重新恢复
         long minFirst = timerWheel.checkPhyPos(currReadTimeMs, processOffset);
         if (debug) {
             minFirst = 0;
@@ -444,6 +474,7 @@ public class TimerMessageStore {
     // 修正 timer log 中最后一个有效的延时消息在 TIMER_TOPIC QUEUE 中的 queueOffset
     // timer_uint->(offsetPy,sizePy)->commitlog(MessageExt)->QueueOffset->ConsumeQueue(比较 offsetPy 是否相同)
     // 不相同则继续在 ConsumeQueue 中向前查找直到找到相同的 offsetPy，那么此时的 queueOffset 就找到了
+    // 只能向前去找，因为 timer log 中最后一个消息的 queueOffset 一定是最大的，所以只能在 consume queue 中向前查找
     public long reviseQueueOffset(long processOffset) {
         // processOffset 前一个 unit 的  offsetPy （在 commitlog 中的 offset）
         // 最后一个有效 unit 的 offsetPy
@@ -590,7 +621,7 @@ public class TimerMessageStore {
                 }
             }
             sbr.release();
-            // 表示当前 checkd 到了 timer log 的哪里（全局）
+            // 表示当前 check 到了 timer log 的哪里（全局）
             checkOffset = mappedFiles.get(index).getFileFromOffset() + position;
             // 找到无效的 timer log unit 则停止检查
             if (stopCheck) {
@@ -606,12 +637,17 @@ public class TimerMessageStore {
     }
 
     public static boolean isMagicOK(int magic) {
+        // 检查整数 magic 是否只使用了低 4 位（即取值范围 0~15）。
+        // 合法：magic 在 0~15 范围内 → 表示高 4 位没有被错误设置额外标志。
+        // 非法：magic 大于 15 → 说明数据损坏或版本不兼容。
         return (magic | 0xF) == 0xF;
     }
 
     public void start() {
         this.shouldStartTime = storeConfig.getDisappearTimeAfterStart() + System.currentTimeMillis();
         // 推进 currWriteTimeMs （向下取整 precisionMs 的整数倍）
+        // 调整时间轮的写入时间戳，用系统启动时间初始化
+        // 读取时间戳是保存在 timerCheckPoint 中，持久化的
         maybeMoveWriteTime();
         // 从 TIMER_TOPIC queue 中不断的消费延时消息，封装 TimerRequest 并加入到 enqueuePutQueue
         enqueueGetService.start();
@@ -638,7 +674,12 @@ public class TimerMessageStore {
         for (int i = 0; i < dequeuePutMessageServices.length; i++) {
             // 每隔 10 ms 从 dequeuePutQueue 中就到期的 TimerRequest 取出
             // 如果 TimerRequest 是正常的到期延时消息，则将其投递到 real topic 中
-            // 如果是到期的 nedd roll 消息，则重新投递到 TIMER_TOPIC
+            // 如果是到期的 need roll 消息，则重新投递到 TIMER_TOPIC
+
+            // dequeueGetService 中会等这批消息被 TimerDequeueGetMessageService 全部处理完并且 dequeuePutMessageServices 将他们正确
+            // 投递到 real topic 或者 needRoll 之后，延时消息被完整的处理完之后
+            // 这时候才会将 currReadTimeMs 向前推进 precisionMs，如果不等消息被完整处理就贸然推进 currReadTimeMs，那么broker挂了
+            // 延时消息就丢了
             dequeuePutMessageServices[i].start();
         }
         // 每隔 1000 ms 执行 flush timerLog,timerWheel,timerCheckpoint
@@ -651,6 +692,8 @@ public class TimerMessageStore {
                     // 每隔 30s
                     long minPy = messageStore.getMinPhyOffset(); // commitlog 最小 offsetPy
                     // 计算出 timer log 最后一个 unit 的 offset
+                    // 计算出 timer log 文件中最后一个 unit 的 offset（所有mappedFile中最后一个unit offset 都是一样的）
+                    // 因为 timerlog 中存储的都是固定长度的unit
                     int checkOffset = timerLog.getOffsetForLastUnit();
                     // commitlog 文件如果过期了，那么 commitlog 中的延时消息所在的 timer log 也应该过期清理
                     // 挨个遍历 timer log 的 mappedFile
@@ -731,7 +774,9 @@ public class TimerMessageStore {
         UtilAll.cleanBuffer(this.bufferLocal.get());
         this.bufferLocal.remove();
     }
-
+    // 调整时间轮的写入时间戳，用系统启动时间初始化
+    // 读取时间戳是保存在 timerCheckPoint 中，持久化的
+    // 每当 TimerRequst 从 enqueuePutQueue 中写入 timerlog,timerWheel 中之后，更新 writeTime
     protected void maybeMoveWriteTime() {
         // currentTimeMillis 向下取整到 precisionMs 的整数倍
         if (currWriteTimeMs < formatTimeMs(System.currentTimeMillis())) {
@@ -830,9 +875,11 @@ public class TimerMessageStore {
     }
 
     public boolean enqueue(int queueId) {
+        // 可以动态调整
         if (storeConfig.isTimerStopEnqueue()) {
             return false;
         }
+        // 只有 master 才可以
         if (!isRunningEnqueue()) {
             return false;
         }
@@ -878,7 +925,7 @@ public class TimerMessageStore {
                         lastEnqueueButExpiredTime = System.currentTimeMillis();
                         // 最近一次从 TIMER_TOPIC queue 中读取到的延时消息的 StoreTimestamp
                         lastEnqueueButExpiredStoreTime = msgExt.getStoreTimestamp();
-                        // 获取延时消息的 delayedTime
+                        // 延时消息投递时间戳 deliverMs (写入 TIMER_TOPIC 之前计算)
                         long delayedTime = Long.parseLong(msgExt.getProperty(TIMER_OUT_MS));
                         // use CQ offset, not offset in Message
                         // offset + i 为延时消息在 TIMER_TOPIC queue 中的位置
@@ -940,7 +987,7 @@ public class TimerMessageStore {
         // 防止因为延时时间太久，commitlog 的内容被删除
         // need roll message 的 deliver time 会被重新设置，如果原来的 deliver timer - 当前时间 - timerRollWindow(2天)
         // 这个增量没超过三分之一的 timerRollWindow，那么 need roll 消息的 deliver timer 会被设置为 当前时间 + 二分之一 timerRollWindow
-        // 否则设置为 当前时间 + 二分之一 timerRollWindow
+        // 否则设置为 当前时间 + timerRollWindow
         // 当 need roll message 到期之后就会来到这里，重新被投递到 TIMER_TOPIC 中，重新走一遍整个延时调度流程
         // 会再次来到 need roll 的判断，将 origin deliver timer - 当前时间  看看是否超过 timerRollWindow
         // 没有超过则按照正常延时消息投递，如果超过则在走一遍 need roll 流程
@@ -982,6 +1029,7 @@ public class TimerMessageStore {
         if (-1 != ret) {
             // If it's a delete message, then slot's total num -1
             // TODO: check if the delete msg is in the same slot with "the msg to be deleted".
+            // delete msg 必须保证和被取消的延时消息位于同一个 slot
             // 更新 slot 信息
             timerWheel.putSlot(delayedTime, slot.firstPos == -1 ? ret : slot.firstPos, ret,
                 isDelete ? slot.num - 1 : slot.num + 1, slot.magic);
@@ -1090,7 +1138,8 @@ public class TimerMessageStore {
         }
         return true;
     }
-
+    // 只要 dequeuePutQueue 中有数据并且 GetMessages，PutMessages 线程一致在处理数据
+    // 时间轮就在这一直等
     public void checkDequeueLatch(CountDownLatch latch, long delayedTime) throws Exception {
         // true if the count reached zero
         if (latch.await(1, TimeUnit.SECONDS)) {
@@ -1120,17 +1169,28 @@ public class TimerMessageStore {
     // 将这些 TimerRequest list 全部添加到 dequeueGetQueue 中等待处理，当 TimerRequest 全部被处理完成
     // currReadTimeMs 向前推进 precisionMs
     public int dequeue() throws Exception {
+        // 动态参数
         if (storeConfig.isTimerStopDequeue()) {
             return -1;
         }
+        // 只有 master 才可以
         if (!isRunningDequeue()) {
             return -1;
         }
+        // 每当 TimerRequst 从 enqueuePutQueue 中写入 timerlog,timerWheel 中之后，更新 writeTime
+        // 只要任务处理完了 currReadTimeMs 就直接往前推，即使任务的处理时间低于 1s, 它也往前推
+
+        // 每当 TimerRequst 从 enqueuePutQueue 中写入 timerlog,timerWheel 中之后，movewriteTime
+        // enqueuePutQueue 没有数据时等待 10ms ，然后 movewriteTime
+        // 时间轮的转动靠的是 currWriteTimeMs
+        // 只要 currReadTimeMs < currWriteTimeMs,那么就不停的取出 currReadTimeMs 对应的 slot 去处理，然后currReadTimeMs向前移动（即使处理时间低于1s）
+        // 可以理解为 currReadTimeMs 就是用于无脑处理延后的消息，currWriteTimeMs 负责卡时间节奏
         if (currReadTimeMs >= currWriteTimeMs) {
             return -1;
         }
         // 从时间轮中获取 currReadTimeMs 对应的 slot
         Slot slot = timerWheel.getSlot(currReadTimeMs);
+        // 对应 slot 是空的，向前推进 readTime
         if (-1 == slot.timeMs) {
             // 向前推进 precisionMs
             moveReadTime();
@@ -1152,7 +1212,7 @@ public class TimerMessageStore {
             SelectMappedBufferResult timeSbr = null;
             //read the timer log one by one
             // slot 中第一个延时消息的 prevPos = -1
-            // 从 slot 中的 lastpos 开始从 timerlog 读取，一直读到 firstpos
+            // 从 slot 中的 lastpos 开始从 timerlog 读取，一直读到 firstPos
             // 循环读取 slot 中所有延时消息
             while (currOffsetPy != -1) {
                 perfCounterTicks.startTick("dequeue_read_timerlog");
@@ -1182,12 +1242,15 @@ public class TimerMessageStore {
                     int sizePy = timeSbr.getByteBuffer().getInt();
                     // 从 timerlog 读取延时消息转换为 TimerRequest
                     TimerRequest timerRequest = new TimerRequest(offsetPy, sizePy, delayedTime, enqueueTime, magic);
+                    // 所有 timerRequest 共用一个 deleteUniqKeys 集合
                     timerRequest.setDeleteList(deleteUniqKeys);
                     if (needDelete(magic) && !needRoll(magic)) {
                         // delete message
                         deleteMsgStack.add(timerRequest);
                     } else {
                         // normal or needRoll message
+                        // 按照 slot 中的顺序添加，因为是从 lastPos 向前遍历
+                        // 所以这里是 addFirst
                         normalMsgStack.addFirst(timerRequest);
                     }
                 } catch (Exception e) {
@@ -1223,7 +1286,10 @@ public class TimerMessageStore {
                 dequeueGetQueue.put(deleteList);
             }
             //do we need to use loop with tryAcquire
-            // 等待对应的延时消息被取消删除
+            // 等待 TimerDequeueGetMessageService(3) 线程将 deleteMsgStack 集合中的消息 unikey 添加到 deleteUniqKeys 中
+            // 后续 TimerDequeueGetMessageService(3) 线程会从 deleteUniqKeys 识别需要被取消的延时消息
+            // 只要 dequeuePutQueue 中有数据并且 GetMessages，PutMessages 线程一致在处理数据
+            // 时间轮就在这一直等
             checkDequeueLatch(deleteLatch, currReadTimeMs);
 
             CountDownLatch normalLatch = new CountDownLatch(normalMsgStack.size());
@@ -1235,7 +1301,9 @@ public class TimerMessageStore {
                 // 每个 list 中的延时消息均位于同一个 commitlog 文件中
                 dequeueGetQueue.put(normalList);
             }
-            // 等待到期的延时消息被处理
+            // 等待到期的延时消息被处理（由 dequeuePutMessageServices 处理，成功投递 real topic 或者 need roll 之后）
+            // 只要 dequeuePutQueue 中有数据并且 GetMessages，PutMessages 线程一致在处理数据
+            // 时间轮就在这一直等
             checkDequeueLatch(normalLatch, currReadTimeMs);
             // if master -> slave -> master, then the read time move forward, and messages will be lossed
             if (dequeueStatusChangeFlag) {
@@ -1244,7 +1312,10 @@ public class TimerMessageStore {
             if (!isRunningDequeue()) {
                 return -1;
             }
-            // currReadTimeMs 向前推进 precisionMs
+            // 等这批消息被 TimerDequeueGetMessageService 全部处理完并且 dequeuePutMessageServices 将他们正确
+            // 投递到 real topic 或者 needRoll 之后，延时消息被完整的处理完之后
+            // 这时候才会将 currReadTimeMs 向前推进 precisionMs，如果不等消息被完整处理就贸然推进 currReadTimeMs，那么broker挂了
+            // 延时消息就丢了
             moveReadTime();
         } catch (Throwable t) {
             LOGGER.error("Unknown error in dequeue process", t);
@@ -1321,12 +1392,14 @@ public class TimerMessageStore {
             MessageAccessor.putProperty(messageExt, TIMER_ENQUEUE_MS, enqueueTime + "");
         }
         if (needRoll) {
+            // 延时消息 roll 的次数，初始为 1， 每 roll 一次增加 1
             if (messageExt.getProperty(TIMER_ROLL_TIMES) != null) {
                 MessageAccessor.putProperty(messageExt, TIMER_ROLL_TIMES, Integer.parseInt(messageExt.getProperty(TIMER_ROLL_TIMES)) + 1 + "");
             } else {
                 MessageAccessor.putProperty(messageExt, TIMER_ROLL_TIMES, 1 + "");
             }
         }
+        // 从时间轮中取出，准备投递到 real topic 时的时间戳
         MessageAccessor.putProperty(messageExt, TIMER_DEQUEUE_MS, System.currentTimeMillis() + "");
         // needRoll 则将消息重新投递到 TIMER_TOPIC 中，否则投递到 real topic 中
         MessageExtBrokerInner message = convertMessage(messageExt, needRoll);
@@ -1802,6 +1875,9 @@ public class TimerMessageStore {
                                 // 进入 enqueuePutQueue 的时间戳
                                 if (tr.getEnqueueTime() == Long.MAX_VALUE) {
                                     // Never enqueue, mark it.
+                                    // 因为 enqueue 的时候，msg 已经到期了，直接放入 dequeuePutQueue 中，不会进入 timer wheel
+                                    // 这种情况下 EnqueueTime 设置为 MAX_VALUE
+                                    // see : org.apache.rocketmq.store.timer.TimerMessageStore.TimerEnqueuePutService.putMessageToTimerWheel
                                     MessageAccessor.putProperty(msgExt, TIMER_ENQUEUE_MS, String.valueOf(Long.MAX_VALUE));
                                 }
 
@@ -1848,6 +1924,7 @@ public class TimerMessageStore {
                         }
                     } finally {
                         // 将延时消息投递到 real topic 之后 release
+                        // dequeueGetQueueService 会在这里唤醒，一直等待这里的 countdown
                         tr.idempotentRelease(!tmpDequeueChangeFlag);
                     }
                 } catch (Throwable e) {
@@ -1877,6 +1954,7 @@ public class TimerMessageStore {
             //Mark different rounds
             boolean isRound = true;
             // 保存 delete msgs ,key 为 PROPERTY_TIMER_DEL_UNIQKEY， value: delete msg
+            // TimerDequeueGetService 线程中的 deleteMsgStack（slot中的所有 timerRequest 共用一个）
             Map<String ,MessageExt> avoidDeleteLose = new HashMap<>(); // 栈中分配，因为作用范围不会逃逸出本方法外
             while (!this.isStopped()) {
                 try {
@@ -1918,7 +1996,7 @@ public class TimerMessageStore {
                                         // 保存 delete msgs ,key 为 PROPERTY_TIMER_DEL_UNIQKEY， value: delete msg
                                         avoidDeleteLose.put(msgExt.getProperty(MessageConst.PROPERTY_TIMER_DEL_UNIQKEY), msgExt);
                                         // 正常延时消息以及 needRoll 延时消息这里的 tr.getDeleteList() 和前面 delete msg 中的 getDeleteList 是同一个实例 ConcurrentSkipListSet
-                                        // 在 deQueue 方法中所有 TimerRequest 都会统一设置相同的 ConcurrentSkipListSet 实例，这里会往里面添加要取消的 PROPERTY_TIMER_DEL_UNIQKEY
+                                        // 在 TimerDequeueGetService 线程中的 deQueue 方法中所有 TimerRequest 都会统一设置相同的 ConcurrentSkipListSet 实例，这里会往里面添加要取消的 PROPERTY_TIMER_DEL_UNIQKEY
                                         tr.getDeleteList().add(msgExt.getProperty(MessageConst.PROPERTY_TIMER_DEL_UNIQKEY));
                                     }
                                     // latch.countDown()

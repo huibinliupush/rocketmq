@@ -140,6 +140,12 @@ public class AckMessageActivity extends AbstractMessingActivity {
             Set<Code> responseCodes = new HashSet<>();
             List<AckMessageResultEntry> entryList = new ArrayList<>();
             for (CompletableFuture<AckMessageResultEntry> entryFuture : futures) { // 自己持有原始的 CompletableFuture 引用
+                // join()：不支持超时，只能无限阻塞直到任务完成
+                // join()：不会响应中断，即使当前线程被中断，它依然会继续等待。这是 join() 的一个缺点，在某些需要及时中断的场景下不适用
+                // 使用 join()：
+                // 在 流式编程、Lambda 表达式 或 不希望编写烦人的 try-catch 时更简洁。通常与 thenApply、thenCompose 等组合使用，因为异常会被自动包装为 CompletionException，符合函数式风格。
+                // 使用 get()：
+                // 当你需要处理受检异常（如超时、中断）或在框架代码中必须显式声明异常时。例如在 Runnable 或 Callable 中，或需要严格区分超时和任务失败的不同场景。
                 AckMessageResultEntry entryResult = entryFuture.join();
                 responseCodes.add(entryResult.getStatus().getCode());
                 entryList.add(entryResult);

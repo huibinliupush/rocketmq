@@ -54,7 +54,7 @@ public class ExpressionMessageFilter implements MessageFilter {
         if (bloomFilter != null && bloomFilter.isValid(consumerFilterData.getBloomFilterData())) { // null
             bloomDataValid = true;
         } else {
-            // SQL92 也是 false , 因为 BloomFilterData 是 null , 只有 expression
+            // SQL92 也是 false , 因为 BloomFilterData 是 null , 只有编译出来的表达式 expression
             bloomDataValid = false;
         }
     }
@@ -68,7 +68,7 @@ public class ExpressionMessageFilter implements MessageFilter {
         if (subscriptionData.isClassFilterMode()) {
             return true;
         }
-
+        // 先通过 tag 快速过滤出一遍，因为 consume queue 中只保存了 tag
         // by tags code.
         if (ExpressionType.isTagType(subscriptionData.getExpressionType())) {
 
@@ -83,6 +83,8 @@ public class ExpressionMessageFilter implements MessageFilter {
             return subscriptionData.getCodeSet().contains(tagsCode.intValue());
         } else {
             // no expression or no bloom
+            // 如果选择的是 SQL92 ， 这里直接返回 true , 具体会在 isMatchedByCommitLog 方法中
+            // 通过 expression 计算
             if (consumerFilterData == null || consumerFilterData.getExpression() == null
                 || consumerFilterData.getCompiledExpression() == null || consumerFilterData.getBloomFilterData() == null) {
                 return true;

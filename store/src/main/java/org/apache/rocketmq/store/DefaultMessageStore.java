@@ -816,7 +816,7 @@ public class DefaultMessageStore implements MessageStore {
         int queueId, long offset, int maxMsgNums, MessageFilter messageFilter) {
         return CompletableFuture.completedFuture(getMessage(group, topic, queueId, offset, maxMsgNums, messageFilter));
     }
-
+    // maxTotalMsgSize = 128M
     @Override
     public GetMessageResult getMessage(final String group, final String topic, final int queueId, final long offset,
         final int maxMsgNums, final int maxTotalMsgSize, final MessageFilter messageFilter) {
@@ -861,6 +861,7 @@ public class DefaultMessageStore implements MessageStore {
 
             if (maxOffset == 0) {
                 status = GetMessageStatus.NO_MESSAGE_IN_QUEUE;
+                // master 返回 newOffset，slave 返回 oldOffset
                 nextBeginOffset = nextOffsetCorrection(offset, 0);
             } else if (offset < minOffset) {
                 status = GetMessageStatus.OFFSET_TOO_SMALL;
@@ -872,9 +873,9 @@ public class DefaultMessageStore implements MessageStore {
                 status = GetMessageStatus.OFFSET_OVERFLOW_BADLY;
                 nextBeginOffset = nextOffsetCorrection(offset, maxOffset);
             } else {
-                // 16000( 指的是 consumer queue 中的 size , 而不是消息的真正 size)
+                // 16000( 指的是 consumer queue 中的索引 size , 而不是消息的真正 size)
                 final int maxFilterMessageSize = Math.max(this.messageStoreConfig.getMaxFilterMessageSize(), maxMsgNums * consumeQueue.getUnitSize());
-                // true
+                // true, 最后记录该队列中还有多少消息未拉取
                 final boolean diskFallRecorded = this.messageStoreConfig.isDiskFallRecorded();
                 // MAX_PULL_MSG_SIZE = 128 * 1024 * 1024
                 long maxPullSize = Math.max(maxTotalMsgSize, 100);
@@ -902,6 +903,7 @@ public class DefaultMessageStore implements MessageStore {
 
                         if (bufferConsumeQueue == null) {
                             status = GetMessageStatus.OFFSET_FOUND_NULL;
+                            // 重新设置 popOffset 为下一个 consumer queue 文件
                             nextBeginOffset = nextOffsetCorrection(nextBeginOffset, this.consumeQueueStore.rollNextFile(consumeQueue, nextBeginOffset));
                             LOGGER.warn("consumer request topic: " + topic + ", offset: " + offset + ", minOffset: " + minOffset + ", maxOffset: "
                                 + maxOffset + ", but access logic queue failed. Correct nextBeginOffset to " + nextBeginOffset);
@@ -921,6 +923,7 @@ public class DefaultMessageStore implements MessageStore {
                             // 默认保存在内存中的消息 size 为机器内存总量的 40%
                             boolean isInMem = estimateInMemByCommitOffset(offsetPy, maxOffsetPy);
                             // 在 consume queue 中拉取的索引 size
+                            // 已经拉取到的消息索引 size 超过了 16000（maxFilterMessageSize）
                             if ((cqUnit.getQueueOffset() - offset) * consumeQueue.getUnitSize() >= maxFilterMessageSize) {
                                 break;
                             }
@@ -928,7 +931,7 @@ public class DefaultMessageStore implements MessageStore {
                             if (this.isTheBatchFull(sizePy, cqUnit.getBatchNum(), maxMsgNums, maxPullSize, getResult.getBufferTotalSize(), getResult.getMessageCount(), isInMem)) {
                                 break;
                             }
-                            // 拉取到的消息索引 size 已经超过了 maxPullSize
+                            // 拉取到的消息 size 已经超过了 maxPullSize
                             if (getResult.getBufferTotalSize() >= maxPullSize) {
                                 break;
                             }
@@ -937,20 +940,28 @@ public class DefaultMessageStore implements MessageStore {
 
                             // Be careful, here should before the isTheBatchFull
                             // QueueOffset 为该消息索引的全局 index
+                            // 下一个要从 consumer queue 拉取的消息索引 offset
                             nextBeginOffset = cqUnit.getQueueOffset() + cqUnit.getBatchNum();
 
                             if (nextPhyFileStartOffset != Long.MIN_VALUE) {
+                                // 消息被删除，也就意味着 offsetPy 所在的 commitlog 文件被整体删除
+                                // nextPhyFileStartOffset 保存的是下一个 commitlog 文件的 startOffset
                                 if (offsetPy < nextPhyFileStartOffset) {
+                                    // 消息已经被删除
                                     continue;
                                 }
                             }
                             // 通过 messageFilter 过滤消息（按照 tag）
+                            // 先通过 tag 快速过滤出一遍，因为 consume queue 中只保存了 tag
+                            // 如果选择的是 SQL92 ， 这里直接返回 true , 具体会在 isMatchedByCommitLog 方法中
+                            // 通过 expression 计算
                             if (messageFilter != null
                                 && !messageFilter.isMatchedByConsumeQueue(cqUnit.getValidTagsCodeAsLong(), cqUnit.getCqExtUnit())) {
+                                // 消息不匹配
                                 if (getResult.getBufferTotalSize() == 0) {
                                     status = GetMessageStatus.NO_MATCHED_MESSAGE;
                                 }
-
+                                // 继续拉取下一个消息
                                 continue;
                             }
                             // 从 commitlog 中读取真正的消息内容
@@ -962,6 +973,8 @@ public class DefaultMessageStore implements MessageStore {
                                 // 如果 offsetPy 位置处的消息已经被删除，说明整个 commitlog 文件被删除了
                                 // 只要有一个消息没有过期，那么所在的 commitlog 文件就不会被删除，消息全部过期才会删除文件
                                 nextPhyFileStartOffset = this.commitLog.rollNextFile(offsetPy);
+                                // 如果消息被删除则继续向后遍历 consumer queue, 只要 offsetPy < nextPhyFileStartOffset
+                                // 就说明消息已经被删除了，则一直向后 continue
                                 continue;
                             }
                             // coldDataFlowControlEnable = false
@@ -1014,11 +1027,13 @@ public class DefaultMessageStore implements MessageStore {
                     * (this.messageStoreConfig.getAccessMessageInMemoryMaxRatio() / 100.0));
                 // 如果剩余的消息总量超过了 40% 的总内存，那么这部分消息可能有的在磁盘中，那么就建议从 slave 拉取
                 // 防止 master 的冷读
+                // 拉取消息完毕之后，计算剩余的消息总量，如果剩余的消息不在内存中，则设置为 true
                 getResult.setSuggestPullingFromSlave(diff > memory);
             }
         } else {
             // consume queue 为 null
             status = GetMessageStatus.NO_MATCHED_LOGIC_QUEUE;
+            // master 返回 newOffset，slave 返回 oldOffset
             nextBeginOffset = nextOffsetCorrection(offset, 0);
         }
 
@@ -1589,7 +1604,7 @@ public class DefaultMessageStore implements MessageStore {
         }
         return false;
     }
-
+    // mincore 判断消息所在 commitlog 的位置是否在 page cache 中
     @Override
     public boolean checkInMemByConsumeOffset(final String topic, final int queueId, long consumeOffset, int batchSize) {
         ConsumeQueueInterface consumeQueue = getConsumeQueue(topic, queueId);
@@ -1610,10 +1625,12 @@ public class DefaultMessageStore implements MessageStore {
             CqUnit lastCQItem = consumeQueue.get(consumeOffset + batchSize);
             if (lastCQItem == null) {
                 int size = firstCQItem.getSize();
+                // mincore 判断内存区域是否在 page cache 中
                 return checkInMemByCommitOffset(startOffsetPy, size);
             }
             long endOffsetPy = lastCQItem.getPos();
             int size = (int) (endOffsetPy - startOffsetPy) + lastCQItem.getSize();
+            // mincore 判断内存区域是否在 page cache 中
             return checkInMemByCommitOffset(startOffsetPy, size);
         }
         return false;
@@ -1797,7 +1814,7 @@ public class DefaultMessageStore implements MessageStore {
     public ConsumeQueueInterface findConsumeQueue(String topic, int queueId) {
         return this.consumeQueueStore.findOrCreateConsumeQueue(topic, queueId);
     }
-
+    // master 返回 newOffset，slave 返回 oldOffset
     private long nextOffsetCorrection(long oldOffset, long newOffset) {
         long nextOffset = oldOffset;
         // offsetCheckInSlave = false
@@ -1819,6 +1836,7 @@ public class DefaultMessageStore implements MessageStore {
         SelectMappedBufferResult message = this.commitLog.getMessage(offsetPy, size);
         if (message != null) {
             try {
+                // mincore 判断内存区域是否在 page cache 中
                 return message.isInMem();
             } finally {
                 message.release();

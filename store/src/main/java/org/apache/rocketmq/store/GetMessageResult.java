@@ -42,6 +42,7 @@ public class GetMessageResult {
     // 在内存中的消息量是总体物理内存的 40% （从 commitlog 的 maxOffsetPy 往前推 40%的总物理内存量）
     // 如果剩余的消息总量超过了 40% 的总内存，那么这部分消息可能有的在磁盘中，那么就建议从 slave 拉取
     // 防止 master 的冷读
+    // 拉取消息完毕之后，计算剩余的消息总量，如果剩余的消息不在内存中，则设置为 true
     private boolean suggestPullingFromSlave = false;
 
     private int msgCount4Commercial = 0;

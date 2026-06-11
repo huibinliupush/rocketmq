@@ -35,6 +35,7 @@ public class TimerCheckpoint {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
     private final RandomAccessFile randomAccessFile;
     private final FileChannel fileChannel;
+    // 4K
     private final MappedByteBuffer mappedByteBuffer;
     // commitReadTimeMs, 最近一次 timer wheel 指针
     private volatile long lastReadTimeMs = 0; //if it is slave, need to read from master
@@ -67,8 +68,11 @@ public class TimerCheckpoint {
 
         if (fileExists) {
             log.info("timer checkpoint file exists, " + scpPath);
+            // commitReadTimeMs, 最近一次 timer wheel 指针
             this.lastReadTimeMs = this.mappedByteBuffer.getLong(0);
+            // timer log 全局 flushwhere
             this.lastTimerLogFlushPos = this.mappedByteBuffer.getLong(8);
+            // min(commitQueueOffset, timerCheckpoint.getMasterTimerQueueOffset()
             this.lastTimerQueueOffset = this.mappedByteBuffer.getLong(16);
             this.masterTimerQueueOffset = this.mappedByteBuffer.getLong(24);
             // new add to record dataVersion

@@ -187,7 +187,7 @@ public class ClientActivity extends AbstractMessingActivity {
             @Override
             public void onNext(ProxyContext ctx, TelemetryCommand request) {
                 try {
-                        // see TelemetryCommand protocal message 定义， oneOf command
+                    // see TelemetryCommand protocal message 定义， oneOf command
                     // gRPC 自动生成 CommandCase 方法
                     switch (request.getCommandCase()) {
                         case SETTINGS: {
@@ -289,6 +289,7 @@ public class ClientActivity extends AbstractMessingActivity {
 
     protected TelemetryCommand processClientSettings(ProxyContext ctx, TelemetryCommand request) {
         String clientId = ctx.getClientID();
+        // 首先用 proxy 端默认的 SubscriptionGroupConfig 与客户端传递过来的 setting 进行合并，缓存在 CLIENT_SETTINGS_MAP 中
         grpcClientSettingsManager.updateClientSettings(ctx, clientId, request.getSettings());
         // 用远程配置中的 isConsumeMessageOrderly，RetryMaxTimes，GroupRetryPolicy 覆盖本地配置
         // 剩下的订阅配置由本地 setting 配置决定，admin 创建的 SubscriptionGroupConfig 主要用来规定消费行为

@@ -59,6 +59,7 @@ public class ReceiptHandle {
             throw new IllegalArgumentException("Parse failed, dataList size " + dataList.size());
         }
         long startOffset = Long.parseLong(dataList.get(0));
+        // popTime
         long retrieveTime = Long.parseLong(dataList.get(1));
         long invisibleTime = Long.parseLong(dataList.get(2));
         int reviveQueueId = Integer.parseInt(dataList.get(3));

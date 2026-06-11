@@ -225,7 +225,7 @@ public abstract class AbstractSendMessageProcessor implements NettyRequestProces
         // DLQTopic : %DLQ%consumerGroup
         // RetryTopic: %RETRY%consumerGroup
         msgInner.setTopic(newTopic);
-        msgInner.setBody(msgExt.getBody());
+        msgInner.setBody(msgExt.getBody());// 原消息body
         msgInner.setFlag(msgExt.getFlag());
         MessageAccessor.setProperties(msgInner, msgExt.getProperties());
         msgInner.setPropertiesString(MessageDecoder.messageProperties2String(msgExt.getProperties()));

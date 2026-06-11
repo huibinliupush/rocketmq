@@ -52,6 +52,7 @@ public class MessageReceiptHandle {
         this.messageId = messageId;
         this.queueOffset = queueOffset;
         this.reconsumeTimes = reconsumeTimes;
+        // popTime
         this.consumeTimestamp = originalReceiptHandle.getRetrieveTime();
     }
 
