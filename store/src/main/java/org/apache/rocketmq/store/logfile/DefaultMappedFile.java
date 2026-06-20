@@ -539,7 +539,8 @@ public class DefaultMappedFile extends AbstractMappedFile {
     public void setFlushedPosition(int pos) {
         FLUSHED_POSITION_UPDATER.set(this, pos);
     }
-
+    // 如果开启 TransientStorePool， 这里的 mappedFile.isFull 只是表示 writeBuffer 已经写满了
+    // 但 writeBuffer 中的内容可能还未 commit 到 mappedFile(实际物理上并未写满，但逻辑上是写满了的)
     @Override
     public boolean isFull() {
         return this.fileSize == WROTE_POSITION_UPDATER.get(this);

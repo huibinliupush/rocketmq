@@ -1170,10 +1170,19 @@ public class CommitLog implements Swappable {
                 if (!defaultMessageStore.getMessageStoreConfig().isDuplicationEnable()) {
                     msg.setStoreTimestamp(beginLockTimestamp);
                 }
-
+                // 如果开启 TransientStorePool， 这里的 mappedFile.isFull 只是表示 writeBuffer 已经写满了
+                // 但 writeBuffer 中的内容可能还未 commit 到 mappedFile(实际物理上并未写满，但逻辑上是写满了的)
                 if (null == mappedFile || mappedFile.isFull()) {
                     mappedFile = this.mappedFileQueue.getLastMappedFile(0); // Mark: NewFile may be cause noise
                     // dataReadAheadEnable = true
+                    // 这里不能直接释放上一个 mappedFile 的 TransientStorePool Buffer
+                    // 因为 buffer 中的内容现在可能还未 commit 到 mappedFile 中（异步过程）
+                    // TransientStorePool Buffer 的释放需要等到 mappedFile 过期被销毁的时候才可以
+                    // 什么时候归还 buffer 呢？
+                    // 那肯定需要等到 buffer 首先已经被写满 1G 了，并且全部 commit 到 mappedFile 中才可以归还
+                    // writeBuffer 和 mappedFile 是一一对应的关系，大小一致都是 1G ， 里面的数据也是全部一样的
+                    // mappedFile 写满了也全 commit 了，那自然 writeBuffer 也就没用了该归还了
+                    // see : org.apache.rocketmq.store.logfile.DefaultMappedFile.commit
                     if (isCloseReadAhead()) { // false
                         setFileReadMode(mappedFile, LibC.MADV_RANDOM);
                     }
